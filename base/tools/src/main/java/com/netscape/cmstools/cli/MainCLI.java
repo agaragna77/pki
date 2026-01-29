@@ -771,6 +771,10 @@ public class MainCLI extends CLI {
         if (logger.isInfoEnabled()) {
             t.printStackTrace(System.err);
 
+        } else if (t.getClass() == Exception.class) {
+            // display a generic error
+            System.err.println("ERROR: " + t.getMessage());
+
         } else if (t instanceof UnrecognizedOptionException || t instanceof MissingArgumentException) {
             // display only the error message
             System.err.println(t.getMessage());
@@ -783,10 +787,6 @@ public class MainCLI extends CLI {
 
         } else if (t instanceof PKIException) {
             System.err.println(t.getClass().getSimpleName() + ": " + t.getMessage());
-
-        } else if (t instanceof Exception) {
-            // display a generic error
-            System.err.println("ERROR: " + t.getMessage());
 
         } else {
             t.printStackTrace(System.err);

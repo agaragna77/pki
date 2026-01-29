@@ -24,6 +24,7 @@ import java.io.InputStreamReader;
 import org.apache.commons.cli.CommandLine;
 import org.dogtagpki.cli.CLIException;
 
+import com.netscape.certsrv.base.PKIException;
 import com.netscape.certsrv.ca.CACertClient;
 import com.netscape.certsrv.cert.CertData;
 import com.netscape.certsrv.cert.CertRequestInfo;
@@ -132,7 +133,7 @@ public class CACertReleaseHoldCLI extends SubsystemCommandCLI {
                 certID = new CertId(cmdArg);
                 releaseCert(certClient, certID, force);
             } catch (Exception e) {
-                mainCLI.handleException(new Exception("Unable to release certificate " + cmdArg + ": " + e.getMessage(), e));
+                mainCLI.handleException(new PKIException("Unable to release certificate " + cmdArg + ": " + e.getMessage(), e));
                 // continue to the next cert
             }
         }
