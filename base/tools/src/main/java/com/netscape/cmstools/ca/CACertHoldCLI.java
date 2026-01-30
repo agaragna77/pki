@@ -26,7 +26,6 @@ import org.apache.commons.cli.Option;
 import org.dogtagpki.cli.CLIException;
 import org.mozilla.jss.netscape.security.x509.RevocationReason;
 
-import com.netscape.certsrv.base.PKIException;
 import com.netscape.certsrv.ca.CACertClient;
 import com.netscape.certsrv.cert.CertData;
 import com.netscape.certsrv.cert.CertRequestInfo;
@@ -153,7 +152,7 @@ public class CACertHoldCLI extends SubsystemCommandCLI {
                 certID = new CertId(cmdArg);
                 holdCert(certClient, certID, comments, force);
             } catch (Exception e) {
-                mainCLI.handleException(new PKIException("Unable to hold certificate " + cmdArg + ": " + e.getMessage(), e));
+                mainCLI.handleException(new CLIException("Unable to hold certificate " + cmdArg + ": " + e.getMessage(), e));
                 // continue to the next cert
             }
 
