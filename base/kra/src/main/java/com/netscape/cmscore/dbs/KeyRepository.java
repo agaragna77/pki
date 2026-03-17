@@ -175,6 +175,10 @@ public class KeyRepository extends Repository {
             reg.registerAttribute(KeyRecord.ATTR_REALM, new
                     StringMapper(KeyDBSchema.LDAP_ATTR_REALM));
         }
+        if (!reg.isAttributeRegistered(KeyRecord.ATTR_KEY_STORAGE_TYPE)) {
+            reg.registerAttribute(KeyRecord.ATTR_KEY_STORAGE_TYPE, new
+                    StringMapper(KeyDBSchema.LDAP_ATTR_KEY_STORAGE_TYPE));
+        }
 
     }
 

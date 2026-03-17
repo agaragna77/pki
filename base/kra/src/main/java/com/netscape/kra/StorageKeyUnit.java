@@ -43,6 +43,7 @@ import org.mozilla.jss.crypto.CryptoToken;
 import org.mozilla.jss.crypto.EncryptionAlgorithm;
 import org.mozilla.jss.crypto.IVParameterSpec;
 import org.mozilla.jss.crypto.IllegalBlockSizeException;
+import org.mozilla.jss.crypto.KeyGenAlgorithm;
 import org.mozilla.jss.crypto.KeyGenerator;
 import org.mozilla.jss.crypto.KeyWrapAlgorithm;
 import org.mozilla.jss.crypto.KeyWrapper;
@@ -1316,5 +1317,75 @@ public class StorageKeyUnit extends EncryptionUnit implements IStorageKeyUnit {
                 pri,
                 params.getPayloadWrapAlgorithm(),
                 params.getPayloadWrappingIV());
+    }
+
+    @Override
+    public byte[] wrapSeed(byte[] seed, WrappingParams params) throws Exception {
+        if (seed == null || seed.length == 0) {
+            throw new IllegalArgumentException("Seed cannot be null or empty");
+        }
+        logger.debug("StorageKeyUnit.wrapSeed");
+        CryptoToken internalToken = getInternalToken();
+        SymmetricKey sk = CryptoUtil.generateKey(
+                internalToken,
+                params.getSkKeyGenAlgorithm(),
+                params.getSkLength(),
+                null,
+                false);
+        byte[] encSeed = CryptoUtil.encryptUsingSymmetricKey(
+                internalToken,
+                sk,
+                seed,
+                params.getPayloadEncryptionAlgorithm(),
+                params.getPayloadEncryptionIV());
+        byte[] session = CryptoUtil.wrapUsingPublicKey(
+                internalToken,
+                getPublicKey(),
+                sk,
+                params.getSkWrapAlgorithm());
+        try (DerOutputStream tmp = new DerOutputStream(); DerOutputStream out = new DerOutputStream()) {
+            tmp.putOctetString(session);
+            tmp.putOctetString(encSeed);
+            out.write(DerValue.tag_Sequence, tmp);
+            return out.toByteArray();
+        }
+    }
+
+    @Override
+    public SymmetricKey unwrapSymmetricFromSeed(byte[] wrappedSeedData, String algorithm, int keySize,
+            WrappingParams params, byte[] contextBytes) throws Exception {
+        logger.debug("StorageKeyUnit.unwrapSymmetricFromSeed");
+        DerValue val = new DerValue(wrappedSeedData);
+        DerInputStream in = val.data;
+        DerValue dSession = in.getDerValue();
+        byte[] session = dSession.getOctetString();
+        DerValue dPri = in.getDerValue();
+        byte[] pri = dPri.getOctetString();
+        CryptoToken token = getToken();
+        SymmetricKey sk = unwrap_session_key(token, session, SymmetricKey.Usage.DECRYPT, params);
+        byte[] seed = CryptoUtil.decryptUsingSymmetricKey(
+                token,
+                params.getPayloadEncryptionIV(),
+                pri,
+                sk,
+                params.getPayloadEncryptionAlgorithm());
+        int keySizeBytes = keySize / 8;
+        byte[] keyMaterial = CryptoUtil.deriveKeyMaterialFromSeed(seed, contextBytes, keySizeBytes);
+        KeyGenAlgorithm alg = KeyGenAlgorithm.AES;
+        if (algorithm != null) {
+            if (algorithm.equalsIgnoreCase("DES3") || algorithm.equalsIgnoreCase("DESede")) {
+                alg = KeyGenAlgorithm.DES3;
+            } else if (algorithm.equalsIgnoreCase("DES")) {
+                alg = KeyGenAlgorithm.DES;
+            } else if (algorithm.equalsIgnoreCase("RC2")) {
+                alg = KeyGenAlgorithm.RC2;
+            } else if (algorithm.equalsIgnoreCase("RC4")) {
+                alg = KeyGenAlgorithm.RC4;
+            }
+        }
+        SymmetricKey.Usage[] usages = new SymmetricKey.Usage[] {
+                SymmetricKey.Usage.ENCRYPT, SymmetricKey.Usage.DECRYPT
+        };
+        return CryptoUtil.createSymmetricKeyFromKeyMaterial(token, keyMaterial, alg, keySize, usages);
     }
 }

@@ -49,4 +49,6 @@ public class KeyDBSchema {
     public static final String LDAP_ATTR_STATUS = "status";
     public static final String LDAP_ATTR_DATA_TYPE = "dataType";
     public static final String LDAP_ATTR_REALM = "realm";
+    /** Key storage strategy: "wrapped" (default) or "seed" */
+    public static final String LDAP_ATTR_KEY_STORAGE_TYPE = "keyStorageType";
 }

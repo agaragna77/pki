@@ -178,4 +178,29 @@ public interface IStorageKeyUnit extends IEncryptionUnit {
      */
     public WrappingParams getWrappingParams(boolean encrypt) throws Exception;
 
+    /**
+     * Seed-based storage: wrap (encrypt) a seed for symmetric key derivation.
+     * The stored blob has the same format as wrap(symmetricKey); only the payload is seed bytes.
+     *
+     * @param seed seed bytes (e.g. 32 bytes) from which the symmetric key can be derived
+     * @param params wrapping parameters
+     * @return wrapped seed blob (session key + encrypted seed)
+     * @throws Exception if wrap fails
+     */
+    byte[] wrapSeed(byte[] seed, WrappingParams params) throws Exception;
+
+    /**
+     * Seed-based storage: unwrap seed blob and derive symmetric key from seed.
+     *
+     * @param wrappedSeedData blob produced by wrapSeed
+     * @param algorithm algorithm name (e.g. "AES")
+     * @param keySize key size in bits (e.g. 128, 256)
+     * @param params wrapping parameters used when wrapping
+     * @param contextBytes optional context for KDF (e.g. keyId, clientId; may be null)
+     * @return reconstructed SymmetricKey (temporary on token)
+     * @throws Exception if unwrap or derivation fails
+     */
+    SymmetricKey unwrapSymmetricFromSeed(byte[] wrappedSeedData, String algorithm, int keySize,
+            WrappingParams params, byte[] contextBytes) throws Exception;
+
 }

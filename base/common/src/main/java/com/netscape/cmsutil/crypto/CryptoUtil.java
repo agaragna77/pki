@@ -1498,6 +1498,79 @@ public class CryptoUtil {
     }
 
     /**
+     * Derives key material from a seed and context using HMAC-SHA256-based KDF
+     * (HKDF-expand style). Used for seed-based key storage strategy.
+     *
+     * @param seed seed bytes (e.g. 32 bytes)
+     * @param context context bytes (e.g. keyId + algorithm + keySize)
+     * @param keySizeInBytes desired key length in bytes
+     * @return derived key material of length keySizeInBytes
+     */
+    public static byte[] deriveKeyMaterialFromSeed(byte[] seed, byte[] context, int keySizeInBytes)
+            throws Exception {
+        if (seed == null || seed.length == 0 || keySizeInBytes <= 0) {
+            throw new IllegalArgumentException("Invalid seed or keySize for KDF");
+        }
+        // PRK = HMAC-SHA256(0x00...00, seed) for HKDF-extract; simple variant: use seed as PRK
+        byte[] prk = new byte[32];
+        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+        byte[] hash = sha256.digest(seed);
+        System.arraycopy(hash, 0, prk, 0, Math.min(32, hash.length));
+        // HKDF-expand: T(1)=HMAC(PRK, context||0x01), T(2)=HMAC(PRK, context||0x02), ...
+        javax.crypto.Mac hmac = javax.crypto.Mac.getInstance("HmacSHA256");
+        javax.crypto.spec.SecretKeySpec prkSpec = new javax.crypto.spec.SecretKeySpec(prk, "HmacSHA256");
+        hmac.init(prkSpec);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(keySizeInBytes);
+        byte[] ctxBlock = context != null ? context : new byte[0];
+        int counter = 1;
+        while (out.size() < keySizeInBytes) {
+            hmac.update(ctxBlock);
+            hmac.update((byte) (counter & 0xff));
+            byte[] t = hmac.doFinal();
+            out.write(t, 0, Math.min(t.length, keySizeInBytes - out.size()));
+            counter++;
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Creates a temporary SymmetricKey on the token from raw key material.
+     * Used when reconstructing a key from seed (derive then import onto token).
+     *
+     * @param token crypto token
+     * @param keyMaterial raw key bytes (length must match keySize for the algorithm)
+     * @param alg key algorithm (e.g. AES)
+     * @param keySize key size in bits (e.g. 128, 256)
+     * @param usages key usages (may be null)
+     * @return temporary SymmetricKey on the token
+     */
+    public static SymmetricKey createSymmetricKeyFromKeyMaterial(CryptoToken token,
+            byte[] keyMaterial, KeyGenAlgorithm alg, int keySize, SymmetricKey.Usage[] usages)
+            throws Exception {
+        if (keyMaterial == null || keyMaterial.length != keySize / 8) {
+            throw new IllegalArgumentException("Key material length must equal keySize/8");
+        }
+        // Wrap key material with a temporary session key, then unwrap on token to get SymmetricKey
+        SymmetricKey sessionKey = generateKey(token, KeyGenAlgorithm.AES, 128, null, true);
+        Cipher cipher = token.getCipherContext(EncryptionAlgorithm.AES_128_CBC);
+        int ivLen = EncryptionAlgorithm.AES_128_CBC.getIVLength();
+        IVParameterSpec iv = new IVParameterSpec(new byte[ivLen > 0 ? ivLen : 16]);
+        cipher.initEncrypt(sessionKey, iv);
+        byte[] wrapped = cipher.doFinal(keyMaterial);
+        KeyWrapper keyWrap = token.getKeyWrapper(KeyWrapAlgorithm.AES_CBC);
+        keyWrap.initUnwrap(sessionKey, iv);
+        SymmetricKey.Type keyType = SymmetricKey.AES;
+        if (alg == KeyGenAlgorithm.DES3 || alg == KeyGenAlgorithm.DESede) {
+            keyType = SymmetricKey.DES3;
+        }
+        int keyLen = keySize / 8;
+        SymmetricKey sk = keyWrap.unwrapSymmetric(wrapped, keyType,
+                usages != null && usages.length > 0 ? usages[0] : SymmetricKey.Usage.ENCRYPT,
+                keyLen);
+        return sk;
+    }
+
+    /**
      * Compares 2 byte arrays to see if they are the same.
      */
     public static boolean compare(byte[] src, byte[] dest) {

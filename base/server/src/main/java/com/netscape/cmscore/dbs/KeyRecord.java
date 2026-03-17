@@ -62,6 +62,11 @@ public class KeyRecord extends DBRecord {
     public static final String ATTR_DATA_TYPE = "dataType";
     public static final String ATTR_STATUS = "status";
     public static final String ATTR_REALM = "realm";
+    /** Key storage strategy: "wrapped" (default) or "seed" */
+    public static final String ATTR_KEY_STORAGE_TYPE = "keyStorageType";
+
+    public static final String KEY_STORAGE_TYPE_WRAPPED = "wrapped";
+    public static final String KEY_STORAGE_TYPE_SEED = "seed";
 
     // key state
     public static final String STATUS_ANY = "ANY";
@@ -84,7 +89,7 @@ public class KeyRecord extends DBRecord {
     private String mStatus = null;
     private String mDataType = null;
     private String realm = null;
-
+    private String mKeyStorageType = null;
 
     protected static Vector<String> mNames = new Vector<>();
     static {
@@ -104,6 +109,7 @@ public class KeyRecord extends DBRecord {
         mNames.addElement(ATTR_STATUS);
         mNames.addElement(ATTR_DATA_TYPE);
         mNames.addElement(ATTR_REALM);
+        mNames.addElement(ATTR_KEY_STORAGE_TYPE);
     }
 
     /**
@@ -170,6 +176,8 @@ public class KeyRecord extends DBRecord {
             mStatus = (String) object;
         } else if (name.equalsIgnoreCase(ATTR_REALM)) {
             realm = (String) object;
+        } else if (name.equalsIgnoreCase(ATTR_KEY_STORAGE_TYPE)) {
+            mKeyStorageType = (String) object;
         } else {
             throw new EBaseException(com.netscape.cmscore.apps.CMS.getUserMessage("CMS_BASE_INVALID_ATTRIBUTE", name));
         }
@@ -213,9 +221,19 @@ public class KeyRecord extends DBRecord {
             return mStatus;
         } else if (name.equalsIgnoreCase(ATTR_REALM)) {
             return realm;
+        } else if (name.equalsIgnoreCase(ATTR_KEY_STORAGE_TYPE)) {
+            return mKeyStorageType;
         } else {
             throw new EBaseException(com.netscape.cmscore.apps.CMS.getUserMessage("CMS_BASE_INVALID_ATTRIBUTE", name));
         }
+    }
+
+    /**
+     * Returns key storage type: {@link #KEY_STORAGE_TYPE_SEED} or {@link #KEY_STORAGE_TYPE_WRAPPED}.
+     * Null or missing means wrapped (backward compatible).
+     */
+    public String getKeyStorageType() {
+        return mKeyStorageType != null ? mKeyStorageType : KEY_STORAGE_TYPE_WRAPPED;
     }
 
     /**

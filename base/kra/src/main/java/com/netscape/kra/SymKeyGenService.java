@@ -18,6 +18,8 @@
 package com.netscape.kra;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 import org.dogtagpki.server.kra.KRAEngine;
 import org.dogtagpki.server.kra.KRAEngineConfig;
+import org.dogtagpki.server.kra.KRAConfig;
 import org.mozilla.jss.crypto.CryptoToken;
 import org.mozilla.jss.crypto.KeyGenAlgorithm;
 import org.mozilla.jss.crypto.SymmetricKey;
@@ -174,57 +177,92 @@ public class SymKeyGenService implements IService {
             keyUsages[1] = SymmetricKey.Usage.ENCRYPT;
         }
 
-        logger.info("SymKeyGenService: Generating symmetric key");
-        SymmetricKey sk = null;
+        boolean useSeedStrategy = false;
         try {
-            sk = CryptoUtil.generateKey(token, kgAlg, keySize, keyUsages, true);
-            logger.debug("SymKeyGenService: session key generated on slot: " + token.getName());
+            KRAEngineConfig engineConfig = KRAEngine.getInstance().getConfig();
+            useSeedStrategy = KRAConfig.KEY_STORAGE_STRATEGY_SEED.equals(
+                    engineConfig.getKRAConfig().getKeyStorageStrategy());
         } catch (Exception e) {
-            String message = "Unable to generate symmetric key: " + e.getMessage();
-            logger.error("SymKeyGenService: " + message, e);
-            auditor.log(new SymKeyGenerationProcessedEvent(
-                    auditSubjectID,
-                    ILogger.FAILURE,
-                    request.getRequestId(),
-                    clientKeyId,
-                    null,
-                    message));
-            throw new EBaseException(message, e);
+            logger.debug("SymKeyGenService: could not read keyStorageStrategy, using wrapped: " + e.getMessage());
         }
-
-        if (sk == null) {
-            String message = "Unable to generate security data";
-            logger.error("SymKeyGenService: " + message);
-            auditor.log(new SymKeyGenerationProcessedEvent(
-                    auditSubjectID,
-                    ILogger.FAILURE,
-                    request.getRequestId(),
-                    clientKeyId,
-                    null,
-                    message));
-            throw new EBaseException(message);
-        }
-
-        logger.info("SymKeyGenService: Wrapping symmetric key");
 
         byte[] publicKey = null;
         byte privateSecurityData[] = null;
         WrappingParams params = null;
+        String keyStorageType = KeyRecord.KEY_STORAGE_TYPE_WRAPPED;
 
-        try {
-            params = mStorageUnit.getWrappingParams(allowEncDecrypt_archival);
-            privateSecurityData = mStorageUnit.wrap(sk, params);
-        } catch (Exception e) {
-            String message = "Unable to wrap security data: " + e.getMessage();
-            logger.error("SymKeyGenService: " + message);
-            auditor.log(new SymKeyGenerationProcessedEvent(
-                    auditSubjectID,
-                    ILogger.FAILURE,
-                    request.getRequestId(),
-                    clientKeyId,
-                    null,
-                    message));
-            throw new EBaseException(message, e);
+        if (useSeedStrategy) {
+            logger.info("SymKeyGenService: Generating symmetric key from seed (seed strategy)");
+            byte[] seed = new byte[32];
+            new SecureRandom().nextBytes(seed);
+            byte[] context = (clientKeyId + "|" + algorithm + "|" + keySize).getBytes(StandardCharsets.UTF_8);
+            int keySizeBytes = keySize / 8;
+            byte[] keyMaterial = CryptoUtil.deriveKeyMaterialFromSeed(seed, context, keySizeBytes);
+            SymmetricKey sk = CryptoUtil.createSymmetricKeyFromKeyMaterial(token, keyMaterial, kgAlg, keySize, keyUsages);
+            try {
+                params = mStorageUnit.getWrappingParams(allowEncDecrypt_archival);
+                privateSecurityData = mStorageUnit.wrapSeed(seed, params);
+                keyStorageType = KeyRecord.KEY_STORAGE_TYPE_SEED;
+            } catch (Exception e) {
+                String message = "Unable to wrap seed: " + e.getMessage();
+                logger.error("SymKeyGenService: " + message, e);
+                auditor.log(new SymKeyGenerationProcessedEvent(
+                        auditSubjectID,
+                        ILogger.FAILURE,
+                        request.getRequestId(),
+                        clientKeyId,
+                        null,
+                        message));
+                throw new EBaseException(message, e);
+            }
+        } else {
+            logger.info("SymKeyGenService: Generating symmetric key");
+            SymmetricKey sk = null;
+            try {
+                sk = CryptoUtil.generateKey(token, kgAlg, keySize, keyUsages, true);
+                logger.debug("SymKeyGenService: session key generated on slot: " + token.getName());
+            } catch (Exception e) {
+                String message = "Unable to generate symmetric key: " + e.getMessage();
+                logger.error("SymKeyGenService: " + message, e);
+                auditor.log(new SymKeyGenerationProcessedEvent(
+                        auditSubjectID,
+                        ILogger.FAILURE,
+                        request.getRequestId(),
+                        clientKeyId,
+                        null,
+                        message));
+                throw new EBaseException(message, e);
+            }
+
+            if (sk == null) {
+                String message = "Unable to generate security data";
+                logger.error("SymKeyGenService: " + message);
+                auditor.log(new SymKeyGenerationProcessedEvent(
+                        auditSubjectID,
+                        ILogger.FAILURE,
+                        request.getRequestId(),
+                        clientKeyId,
+                        null,
+                        message));
+                throw new EBaseException(message);
+            }
+
+            logger.info("SymKeyGenService: Wrapping symmetric key");
+            try {
+                params = mStorageUnit.getWrappingParams(allowEncDecrypt_archival);
+                privateSecurityData = mStorageUnit.wrap(sk, params);
+            } catch (Exception e) {
+                String message = "Unable to wrap security data: " + e.getMessage();
+                logger.error("SymKeyGenService: " + message);
+                auditor.log(new SymKeyGenerationProcessedEvent(
+                        auditSubjectID,
+                        ILogger.FAILURE,
+                        request.getRequestId(),
+                        clientKeyId,
+                        null,
+                        message));
+                throw new EBaseException(message, e);
+            }
         }
 
         logger.info("SymKeyGenService: Creating key record");
@@ -234,6 +272,7 @@ public class SymKeyGenService implements IService {
                 algorithm, owner);
 
         rec.set(KeyRecord.ATTR_CLIENT_ID, clientKeyId);
+        rec.set(KeyRecord.ATTR_KEY_STORAGE_TYPE, keyStorageType);
 
         //Now we need a serial number for our new key.
         if (rec.getSerialNumber() != null) {

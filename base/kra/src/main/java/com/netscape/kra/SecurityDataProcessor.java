@@ -788,6 +788,15 @@ public class SecurityDataProcessor {
             throws EBaseException {
 
         try {
+            if (KeyRecord.KEY_STORAGE_TYPE_SEED.equals(keyRecord.getKeyStorageType())) {
+                byte[] context = buildSeedContext(keyRecord);
+                return storageUnit.unwrapSymmetricFromSeed(
+                        keyRecord.getPrivateKeyData(),
+                        keyRecord.getAlgorithm(),
+                        keyRecord.getKeySize(),
+                        keyRecord.getWrappingParams(storageUnit.getOldWrappingParams()),
+                        context);
+            }
             SymmetricKey symKey =
                     storageUnit.unwrap(
                             keyRecord.getPrivateKeyData(),
@@ -799,6 +808,16 @@ public class SecurityDataProcessor {
             throw new EKRAException(CMS.getUserMessage("CMS_KRA_RECOVERY_FAILED_1",
                     "recoverSymKey() " + e.toString()));
         }
+    }
+
+    private static byte[] buildSeedContext(KeyRecord keyRecord) throws EBaseException {
+        String clientId = (String) keyRecord.get(KeyRecord.ATTR_CLIENT_ID);
+        String algorithm = keyRecord.getAlgorithm();
+        Integer keySize = keyRecord.getKeySize();
+        if (clientId == null) clientId = "";
+        if (algorithm == null) algorithm = "AES";
+        if (keySize == null) keySize = 128;
+        return (clientId + "|" + algorithm + "|" + keySize).getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public byte[] recoverSecurityData(KeyRecord keyRecord)
