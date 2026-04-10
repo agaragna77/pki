@@ -305,6 +305,8 @@ function keyLengthsCurvesOptions (keyPurpose)
   var options = "";
   var lengthsOrCurves = null;
   var keyLengthsCurves = "";
+  var mldsaPrefix = "allowedKeys.mldsa";
+  var mldsaVariants = [];
 
   for (var i = 0; i < policySetListSet.length; i++) {
     for (var j = 0; j < policySetListSet[i].policySet.length; j++) {
@@ -327,6 +329,17 @@ function keyLengthsCurvesOptions (keyPurpose)
                   keyLengthsCurves = policySetListSet[i].policySet[j].constraintSet[k].value;
                   lengthsOrCurves = keyLengthsCurves.split(",");
               }
+              var cname = policySetListSet[i].policySet[j].constraintSet[k].name;
+              if (cname && cname.length > mldsaPrefix.length
+                  && cname.substring(0, mldsaPrefix.length).toLowerCase() == mldsaPrefix.toLowerCase()) {
+                var cv = policySetListSet[i].policySet[j].constraintSet[k].value;
+                if (cv && String(cv).toLowerCase() == "true") {
+                  var suf = cname.substring(mldsaPrefix.length);
+                  if (isNumeric(suf)) {
+                    mldsaVariants.push(suf);
+                  }
+                }
+              }
           }
         }
       }
@@ -334,6 +347,13 @@ function keyLengthsCurvesOptions (keyPurpose)
   }
   if (isIE()) {
     keyType = "RSA";
+  }
+
+  if (keyType == "MLDSA" && mldsaVariants.length > 0) {
+    lengthsOrCurves = mldsaVariants;
+  }
+  if (lengthsOrCurves == null) {
+    lengthsOrCurves = [];
   }
 
   var value = 0;
@@ -368,7 +388,9 @@ function keyLengthsCurvesOptions (keyPurpose)
   }
 
   if (options.length == 0) {
-     if (keyType != "EC") {
+     if (keyType == "MLDSA") {
+         options = '<OPTION VALUE=44 SELECTED>44';
+     } else if (keyType != "EC") {
          options = '<OPTION VALUE=1024 SELECTED>1024';
      } else {
          if (isIE()) {
