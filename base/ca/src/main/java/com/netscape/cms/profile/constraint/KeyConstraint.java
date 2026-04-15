@@ -125,8 +125,8 @@ public class KeyConstraint extends EnrollConstraint {
     }
 
     /**
-     * Reads all {@code allowedKeys.*} leaves into a nested map: outer key = prefix before first {@code _}
-     * (uppercase), inner key = remainder after first {@code _}, value = property string (e.g. true/false).
+     * Reads all {@code allowedKeys.*} leaves into a nested map: algType = prefix before first {@code _}
+     * (uppercase), keyValue = remainder after first {@code _}, value = property string (e.g. true/false).
      * Malformed leaves (not exactly two segments, empty segment, or unreadable value) are logged and skipped.
      */
     private Map<String, Map<String, String>> mapAllowedKeys() {
@@ -147,8 +147,8 @@ public class KeyConstraint extends EnrollConstraint {
                             leaf);
                     continue;
                 }
-                String outer = parts[0].toUpperCase();
-                String inner = parts[1];
+                String algType = parts[0].toUpperCase();
+                String keyValue = parts[1];
                 String propValue;
                 try {
                     propValue = store.getString(leaf);
@@ -156,7 +156,7 @@ public class KeyConstraint extends EnrollConstraint {
                     logger.warn("KeyConstraint: allowedKeys property \"{}\" ignored: {}", leaf, e.getMessage());
                     continue;
                 }
-                result.computeIfAbsent(outer, k -> new HashMap<>()).put(inner, propValue);
+                result.computeIfAbsent(algType, k -> new HashMap<>()).put(keyValue, propValue);
             }
         } catch (Exception e) {
             logger.warn("KeyConstraint: failed to enumerate allowedKeys: {}", e.getMessage());
@@ -166,7 +166,7 @@ public class KeyConstraint extends EnrollConstraint {
 
     /**
      * Starts from {@code baseTokens} (trimmed, non-empty, insertion order preserved), then applies
-     * {@code allowedKeysMap} for the algorithm family whose outer key is {@code algName} in uppercase.
+     * {@code allowedKeysMap} for the algorithm family keyed by {@code algName} in uppercase.
      */
     private Set<String> getAllowedKeysForAlgorithm(
             String[] baseTokens,
@@ -187,29 +187,29 @@ public class KeyConstraint extends EnrollConstraint {
         if (algName == null || allowedKeysMap == null) {
             return allowed;
         }
-        String outer = algName.toUpperCase();
-        Map<String, String> overridesByInnerKey = allowedKeysMap.get(outer);
+        String algType = algName.toUpperCase();
+        Map<String, String> overridesByInnerKey = allowedKeysMap.get(algType);
         if (overridesByInnerKey == null || overridesByInnerKey.isEmpty()) {
             return allowed;
         }
         for (Map.Entry<String, String> entry : overridesByInnerKey.entrySet()) {
-            String innerKey = entry.getKey();
+            String keyValue = entry.getKey();
             String propertyValue = entry.getValue();
             if (Optional.ofNullable(propertyValue)
                     .map(String::trim)
                     .filter("true"::equalsIgnoreCase)
                     .isPresent()) {
-                allowed.add(innerKey);
+                allowed.add(keyValue);
             } else if (Optional.ofNullable(propertyValue)
                     .map(String::trim)
                     .filter("false"::equalsIgnoreCase)
                     .isPresent()) {
-                allowed.remove(innerKey);
+                allowed.remove(keyValue);
             } else {
                 logger.warn(
                         "KeyConstraint: configuration: allowedKeys {} entry \"{}\" has non-boolean value \"{}\"; ignored",
-                        outer,
-                        innerKey,
+                        algType,
+                        keyValue,
                         propertyValue);
             }
         }
@@ -510,9 +510,9 @@ public class KeyConstraint extends EnrollConstraint {
                         leaf);
                 return;
             }
-            String outer = parts[0].toUpperCase();
-            String inner = parts[1];
-            validateKeyParams(name, outer, inner);
+            String algType = parts[0].toUpperCase();
+            String keyValue = parts[1];
+            validateKeyParams(name, algType, keyValue);
         }
 
         //establish keyType, we don't know which order these params will arrive
