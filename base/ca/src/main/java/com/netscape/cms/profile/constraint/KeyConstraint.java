@@ -19,7 +19,13 @@ package com.netscape.cms.profile.constraint;
 
 import java.math.BigInteger;
 import java.security.interfaces.DSAParams;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.Vector;
 
 import org.dogtagpki.server.ca.CAEngine;
@@ -31,6 +37,7 @@ import org.mozilla.jss.netscape.security.x509.CertificateX509Key;
 import org.mozilla.jss.netscape.security.x509.X509CertInfo;
 import org.mozilla.jss.netscape.security.x509.X509Key;
 
+import com.netscape.certsrv.base.EBaseException;
 import com.netscape.certsrv.profile.EProfileException;
 import com.netscape.certsrv.profile.ERejectException;
 import com.netscape.certsrv.property.Descriptor;
@@ -41,6 +48,7 @@ import com.netscape.cms.profile.def.NoDefault;
 import com.netscape.cms.profile.def.PolicyDefault;
 import com.netscape.cms.profile.def.UserKeyDefault;
 import com.netscape.cmscore.apps.CMS;
+import com.netscape.cmscore.base.ConfigStore;
 import com.netscape.cmscore.request.Request;
 import com.netscape.cmsutil.crypto.CryptoUtil;
 
@@ -57,10 +65,13 @@ public class KeyConstraint extends EnrollConstraint {
 
     public static final String CONFIG_KEY_TYPE = "keyType"; // (EC, RSA, MLDSA)
     public static final String CONFIG_KEY_PARAMETERS = "keyParameters";
-
+    private static final String CONFIG_ALLOWED_KEYS_PARAM = "allowedKeys";
+    private static final String CONFIG_ALLOWED_KEYS_PREFIX = CONFIG_ALLOWED_KEYS_PARAM + ".";
+    
     private static String[] cfgECCurves = null;
     private static String keyType = "";
     private static String keyParams = "";
+    private static String allowedKeys = "";
 
     public KeyConstraint() {
         super();
@@ -79,6 +90,7 @@ public class KeyConstraint extends EnrollConstraint {
         try {
             ecNames = cs.getString("keys.ecc.curve.list");
         } catch (Exception e) {
+            logger.warn("KeyConstraint.init: could not read keys.ecc.curve.list: {}", e.getMessage());
         }
 
         logger.debug("KeyConstraint.init ecNames: " + ecNames);
@@ -99,6 +111,166 @@ public class KeyConstraint extends EnrollConstraint {
         }
 
         return null;
+    }
+
+    private ConfigStore getAllowedKeysStore() {
+        try {
+            ConfigStore params = getConfigStore().getSubStore(CONFIG_PARAMS, ConfigStore.class);
+            if (params == null) {
+                return null;
+            }
+            return params.getSubStore(CONFIG_ALLOWED_KEYS_PARAM, ConfigStore.class);
+        } catch (Exception e) {
+            logger.warn("KeyConstraint: could not open constraint.params.allowedKeys: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Reads all {@code allowedKeys.*} leaves into a nested map: algType = prefix before first {@code .}
+     * (uppercase), keyValue = remainder after first {@code .}, value = property string (e.g. true/false).
+     * Malformed leaves (not exactly two segments, empty segment, or unreadable value) are logged and skipped.
+     */
+    private Map<String, Map<String, String>> mapAllowedKeys() throws ERejectException {
+        Map<String, Map<String, String>> result = new HashMap<>();
+        ConfigStore store = getAllowedKeysStore();
+        if (store == null) {
+            return result;
+        }
+        try {
+            Enumeration<String> en = store.getPropertyNames();
+            while (en.hasMoreElements()) {
+                String leaf = en.nextElement();
+                String[] parts = leaf.split("\\.", 2);
+                if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+                    throw new ERejectException(CMS.getUserMessage("CMS_PROFILE_INVALID_CONFIGURATION_PARAM", leaf));
+                }
+                String algType = parts[0].toUpperCase(Locale.ROOT);
+                validateAlgorithmName(algType);
+                String keyValue = parts[1];
+                String propValue;
+                try {
+                    propValue = store.getString(leaf);
+                } catch (EBaseException e) {
+                    logger.warn("KeyConstraint: allowedKeys property \"{}\" ignored: {}", leaf, e.getMessage());
+                    continue;
+                }
+                result.computeIfAbsent(algType, k -> new HashMap<>()).put(keyValue, propValue);
+            }
+        } catch (Exception e) {
+            logger.warn("KeyConstraint: failed to enumerate allowedKeys: {}", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * Starts from {@code baseTokens} (trimmed, non-empty, insertion order preserved), then applies
+     * {@code allowedKeysMap} for the algorithm family keyed by {@code algName} in uppercase.
+     */
+    private Set<String> getAllowedKeysForAlgorithm(
+            String[] baseTokens,
+            Map<String, Map<String, String>> allowedKeysMap,
+            String algName) {
+        Set<String> allowed = new LinkedHashSet<>();
+        if (baseTokens != null) {
+            for (String baseToken : baseTokens) {
+                if (baseToken == null) {
+                    continue;
+                }
+                String trimmedToken = baseToken.trim();
+                if (!trimmedToken.isEmpty()) {
+                    allowed.add(trimmedToken);
+                }
+            }
+        }
+        if (algName == null || allowedKeysMap == null) {
+            return allowed;
+        }
+        String algType = algName.toUpperCase();
+        Map<String, String> overridesByInnerKey = allowedKeysMap.get(algType);
+        if (overridesByInnerKey == null || overridesByInnerKey.isEmpty()) {
+            return allowed;
+        }
+        for (Map.Entry<String, String> entry : overridesByInnerKey.entrySet()) {
+            String keyValue = entry.getKey();
+            String propertyValue = entry.getValue();
+            if (Optional.ofNullable(propertyValue)
+                    .map(String::trim)
+                    .filter("true"::equalsIgnoreCase)
+                    .isPresent()) {
+                allowed.add(keyValue);
+            } else if (Optional.ofNullable(propertyValue)
+                    .map(String::trim)
+                    .filter("false"::equalsIgnoreCase)
+                    .isPresent()) {
+                allowed.remove(keyValue);
+            } else {
+                logger.warn(
+                        "KeyConstraint: configuration: allowedKeys {} entry \"{}\" has non-boolean value \"{}\"; ignored",
+                        algType,
+                        keyValue,
+                        propertyValue);
+            }
+        }
+        return allowed;
+    }
+
+    private void checkAllowedAlgorithm(
+        int keySize,
+        String value,
+        String[] baseTokens,
+        Map<String, Map<String, String>> allowedKeysMap,
+        String algName,
+        Request request
+    ) throws ERejectException {
+        Set<String> allowedKeys = getAllowedKeysForAlgorithm(baseTokens, allowedKeysMap, algName);
+        logger.info("{} KeySize is {}", algName, keySize);
+        if (!allowedKeys.contains(Integer.toString(keySize))) {
+            throw new ERejectException(
+                    CMS.getUserMessage(
+                            getLocale(request),
+                            "CMS_PROFILE_KEY_PARAMS_NOT_MATCHED",
+                            value));
+        }
+        logger.debug("KeyConstraint.validate: {} key contraints passed.", algName);
+    }
+
+    @Override
+    public Enumeration<String> getConfigNames() {
+        Vector<String> names = new Vector<>();
+        names.add(CONFIG_KEY_TYPE);
+        names.add(CONFIG_KEY_PARAMETERS);
+        ConfigStore keys = getAllowedKeysStore();
+        if (keys != null) {
+            try {
+                Enumeration<String> en = keys.getPropertyNames();
+                while (en.hasMoreElements()) {
+                    names.add(CONFIG_ALLOWED_KEYS_PREFIX + en.nextElement());
+                }
+            } catch (Exception e) {
+                logger.warn("KeyConstraint.getConfigNames: {}", e.getMessage());
+            }
+        }
+        return names.elements();
+    }
+
+    @Override
+    public String getConfig(String name, String defval) {
+        if (name != null && name.startsWith(CONFIG_ALLOWED_KEYS_PREFIX)
+                && name.length() > CONFIG_ALLOWED_KEYS_PREFIX.length()) {
+            String leaf = name.substring(CONFIG_ALLOWED_KEYS_PREFIX.length());
+            ConfigStore keys = getAllowedKeysStore();
+            if (keys != null) {
+                try {
+                    return keys.getString(leaf, defval);
+                } catch (EBaseException e) {
+                    logger.warn("KeyConstraint.getConfig allowedKeys.{}: {}", leaf, e.getMessage());
+                    return defval;
+                }
+            }
+            return defval;
+        }
+        return super.getConfig(name, defval);
     }
 
     /**
@@ -151,7 +323,17 @@ public class KeyConstraint extends EnrollConstraint {
 
             value = getConfig(CONFIG_KEY_PARAMETERS);
 
-            String[] keyParams = value.split(",");
+            String[] keyParams = (value != null) ? value.split(",") : new String[0];
+       
+            Map<String, Map<String, String>> allowedKeysMap = mapAllowedKeys();
+
+            if (keyParams.length > 0) {
+                logger.warn("KeyConstraint.validate: use of {} is DEPRECATED, use {} instead", CONFIG_KEY_PARAMETERS, CONFIG_ALLOWED_KEYS_PARAM);
+                if (allowedKeysMap.size() > 0) {
+                    logger.error("Invalid Configuration: can't mix {} and {}", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS);
+                    throw new EPropertyException(CMS.getUserMessage("CMS_MIXED_KEY_CONFIGURATION", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS));
+                }
+            }
 
             if (alg.equals("EC")) {
                 if (!alg.equals(keyType) && !isOptional(keyType)) {
@@ -170,11 +352,11 @@ public class KeyConstraint extends EnrollConstraint {
                 if (vect != null) {
                     logger.debug("vect: " + vect);
 
+                    Set<String> ecKeys = getAllowedKeysForAlgorithm(keyParams, allowedKeysMap, "EC");
                     if (!isOptional(keyType)) {
                         //Check the curve parameters only if explicit ECC or not optional
-                        for (int i = 0; i < keyParams.length; i++) {
-                            String ecParam = keyParams[i];
-                            logger.debug("keyParams[i]: " + i + " param: " + ecParam);
+                        for (String ecParam : ecKeys) {
+                            logger.debug("EC key parameter: " + ecParam);
                             if (vect.contains(ecParam)) {
                                 curveFound = true;
                                 logger.debug("KeyConstraint.validate: EC key constrainst passed.");
@@ -195,16 +377,10 @@ public class KeyConstraint extends EnrollConstraint {
                     throw new ERejectException(message);
                 }
 
-            } else {
-                logger.info("KeySize is {}", keySize);
-                if (!arrayContainsString(keyParams, Integer.toString(keySize))) {
-                    throw new ERejectException(
-                            CMS.getUserMessage(
-                                    getLocale(request),
-                                    "CMS_PROFILE_KEY_PARAMS_NOT_MATCHED",
-                                    value));
-                }
-                logger.debug("KeyConstraint.validate: RSA key contraints passed.");
+            } else if (alg.startsWith("ML-DSA-")) {
+                checkAllowedAlgorithm(keySize, value, keyParams, allowedKeysMap, "MLDSA", request);
+            } else if (alg.equals("RSA")) {
+                checkAllowedAlgorithm(keySize, value, keyParams, allowedKeysMap, "RSA", request);
             }
         } catch (Exception e) {
             if (e instanceof ERejectException) {
@@ -213,6 +389,21 @@ public class KeyConstraint extends EnrollConstraint {
             logger.error("KeyConstraint: " + e.getMessage(), e);
             throw new ERejectException(CMS.getUserMessage(
                         getLocale(request), "CMS_PROFILE_KEY_NOT_FOUND"));
+        }
+    }
+
+    private void validateAlgorithmName(String algName) throws EPropertyException {
+        String alg = algName.toUpperCase();
+        if (alg.equals("RSA")) {
+            return;
+        } else if (alg.equals("DSA")) {
+            return;
+        } else if (alg.equals("ML-DSA") || alg.matches("^ML-DSA-\\d+$")) {
+            return;
+        } else if (alg.equals("EC")) {
+            return;
+        } else {
+            throw new EPropertyException(CMS.getUserMessage("CMS_PROFILE_INVALID_KEY_TYPE", algName));
         }
     }
 
@@ -262,25 +453,14 @@ public class KeyConstraint extends EnrollConstraint {
         return false;
     }
 
-    @Override
-    public void setConfig(String name, String value)
-            throws EPropertyException {
+    private void validateKeyParams(String name, String keyType, String keyParams) throws EPropertyException {
 
-        logger.info("KeyConstraint: Setting " + name + ": " + value);
-
-        //establish keyType, we don't know which order these params will arrive
-        if (name.equals(CONFIG_KEY_TYPE)) {
-            keyType = value;
-            if (keyParams.equals(""))
-                return;
-        }
-
-        //establish keyParams
-        if (name.equals(CONFIG_KEY_PARAMETERS)) {
-            keyParams = value;
-
-            if (keyType.equals(""))
-                return;
+        if (KeyConstraint.allowedKeys.length() > 0 && KeyConstraint.keyParams.length() > 0) {
+            logger.error("Invalid Configuration: can't mix {} and {}", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS);
+            KeyConstraint.keyType = "";
+            KeyConstraint.keyParams = "";
+            KeyConstraint.allowedKeys = "";
+            throw new EPropertyException(CMS.getUserMessage("CMS_MIXED_KEY_CONFIGURATION", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS));
         }
 
         // All the params we need for validation have been collected,
@@ -304,9 +484,17 @@ public class KeyConstraint extends EnrollConstraint {
 
                     if (!isECCurve) {
                         logger.error("Invalid EC curve: " + param);
-                        keyType = "";
-                        keyParams = "";
+                        KeyConstraint.keyType = "";
+                        KeyConstraint.keyParams = "";
+                        KeyConstraint.allowedKeys = "";
                         throw new EPropertyException(CMS.getUserMessage("CMS_INVALID_PROPERTY", name));
+                    }
+                }
+
+            } else if (keyType.equals("MLDSA")) {
+                for (String param : params) {
+                    if (param != null && !param.trim().isEmpty()) {
+                        logger.info("KeyConstraint: MLDSA keyParameters token (not used for ML-DSA validation): " + param);
                     }
                 }
 
@@ -327,13 +515,59 @@ public class KeyConstraint extends EnrollConstraint {
 
                     if (keySize <= 0 && !isECCurve) {
                         logger.error("Invalid EC curve: " + param);
-                        keyType = "";
-                        keyParams = "";
+                        KeyConstraint.keyType = "";
+                        KeyConstraint.keyParams = "";
+                        KeyConstraint.allowedKeys = "";
                         throw new EPropertyException(CMS.getUserMessage("CMS_INVALID_PROPERTY", name));
                     }
                 }
             }
         }
+    }
+
+    @Override
+    public void setConfig(String name, String value)
+            throws EPropertyException {
+
+        logger.info("KeyConstraint: Setting " + name + ": " + value);
+
+        if (name != null && name.startsWith(CONFIG_ALLOWED_KEYS_PREFIX)) {
+            allowedKeys = value;
+        }
+        
+        if (name != null && name.startsWith(CONFIG_ALLOWED_KEYS_PREFIX)
+            && Optional.ofNullable(value).map(String::trim).filter("true"::equalsIgnoreCase).isPresent()
+            && name.length() > CONFIG_ALLOWED_KEYS_PREFIX.length()
+        ) {
+            String leaf = name.substring(CONFIG_ALLOWED_KEYS_PREFIX.length());
+            String[] parts = leaf.split("\\.", 2);
+            if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+                throw new EPropertyException(CMS.getUserMessage("CMS_INVALID_PROPERTY", name));
+            }
+            String algType = parts[0].toUpperCase(Locale.ROOT);
+            validateAlgorithmName(algType);
+            String keyValue = parts[1];
+            validateKeyParams(name, algType, keyValue);
+        }
+
+        //establish keyType, we don't know which order these params will arrive
+        if (name.equals(CONFIG_KEY_TYPE)) {
+            keyType = value;
+            if (keyParams.equals(""))
+                return;
+        }
+
+        //establish keyParams
+        if (name.equals(CONFIG_KEY_PARAMETERS)) {
+            keyParams = value;
+            if (!value.equals("")) {
+                logger.warn("KeyConstraint: use of {} is DEPRECATED, use {} instead", CONFIG_KEY_PARAMETERS, CONFIG_ALLOWED_KEYS_PARAM);
+            }
+            if (keyType.equals(""))
+                return;
+        }
+
+        validateKeyParams(name, keyType, keyParams);
 
         //Actually set the configuration in the profile
         super.setConfig(CONFIG_KEY_TYPE, keyType);
