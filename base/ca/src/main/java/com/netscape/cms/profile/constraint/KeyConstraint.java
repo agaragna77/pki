@@ -224,7 +224,7 @@ public class KeyConstraint extends EnrollConstraint {
         Request request
     ) throws ERejectException {
         Set<String> allowedKeys = getAllowedKeysForAlgorithm(baseTokens, allowedKeysMap, algName);
-        logger.info("{} KeySize is {}", algName, keySize);
+        logger.info("{} KeySize is {} with allowed keys {}", algName, keySize, allowedKeys);
         if (!allowedKeys.contains(Integer.toString(keySize))) {
             throw new ERejectException(
                     CMS.getUserMessage(
@@ -333,6 +333,7 @@ public class KeyConstraint extends EnrollConstraint {
                     logger.error("Invalid Configuration: can't mix {} and {}", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS);
                     throw new EPropertyException(CMS.getUserMessage("CMS_MIXED_KEY_CONFIGURATION", CONFIG_ALLOWED_KEYS_PARAM, CONFIG_KEY_PARAMETERS));
                 }
+                logger.debug("{}: {}", CONFIG_KEY_PARAMETERS, value);
             }
 
             if (alg.equals("EC")) {
