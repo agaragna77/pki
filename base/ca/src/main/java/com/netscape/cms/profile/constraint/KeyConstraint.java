@@ -138,9 +138,8 @@ public class KeyConstraint extends EnrollConstraint {
             return result;
         }
         try {
-            Enumeration<String> en = store.getPropertyNames();
-            while (en.hasMoreElements()) {
-                String leaf = en.nextElement();
+            Map<String, String> properties = store.getProperties();
+            for (String leaf : properties.keySet()) {
                 String[] parts = leaf.split("\\.", 2);
                 if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
                     throw new ERejectException(CMS.getUserMessage("CMS_PROFILE_INVALID_CONFIGURATION_PARAM", leaf));
@@ -148,13 +147,7 @@ public class KeyConstraint extends EnrollConstraint {
                 String algType = parts[0].toUpperCase(Locale.ROOT);
                 validateAlgorithmName(algType);
                 String keyValue = parts[1];
-                String propValue;
-                try {
-                    propValue = store.getString(leaf);
-                } catch (EBaseException e) {
-                    logger.warn("KeyConstraint: allowedKeys property \"{}\" ignored: {}", leaf, e.getMessage());
-                    continue;
-                }
+                String propValue = properties.get(leaf);
                 result.computeIfAbsent(algType, k -> new HashMap<>()).put(keyValue, propValue);
             }
         } catch (Exception e) {
@@ -243,9 +236,9 @@ public class KeyConstraint extends EnrollConstraint {
         ConfigStore keys = getAllowedKeysStore();
         if (keys != null) {
             try {
-                Enumeration<String> en = keys.getPropertyNames();
-                while (en.hasMoreElements()) {
-                    names.add(CONFIG_ALLOWED_KEYS_PREFIX + en.nextElement());
+                Map<String, String> properties = keys.getProperties();
+                for (String leaf : properties.keySet()) {
+                    names.add(CONFIG_ALLOWED_KEYS_PREFIX + leaf);
                 }
             } catch (Exception e) {
                 logger.warn("KeyConstraint.getConfigNames: {}", e.getMessage());
@@ -323,7 +316,7 @@ public class KeyConstraint extends EnrollConstraint {
 
             value = getConfig(CONFIG_KEY_PARAMETERS);
 
-            String[] keyParams = (value != null) ? value.split(",") : new String[0];
+            String[] keyParams = (value != null && !value.isEmpty()) ? value.split(",") : new String[0];
        
             Map<String, Map<String, String>> allowedKeysMap = mapAllowedKeys();
 
