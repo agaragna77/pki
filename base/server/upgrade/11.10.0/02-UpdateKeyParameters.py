@@ -16,14 +16,17 @@ KEY_PARAMETERS_SUFFIX = '.constraint.params.keyParameters'
 MLDSA_SIZES = frozenset({'44', '65', '87'})
 
 
-def classify_key_parameter_token(token):
+def classify_key_parameter_token(token, key_type=''):
     """
     Map a single keyParameters token to (family, value) for allowedKeys,
-    where family is: RSA, EC, or MLDSA.
+    where family is: RSA, EC, MLDSA, or MLKEM.
     """
     t = token.strip()
     if not t:
         return None
+    kt = (key_type or '').strip().upper()
+    if kt == 'MLKEM' and t.isdigit():
+        return 'MLKEM', t
     if t in MLDSA_SIZES:
         return 'MLDSA', t
     if t.isdigit():
@@ -60,6 +63,16 @@ def _profile_has_key_parameters(lines):
         if k and k.endswith(KEY_PARAMETERS_SUFFIX):
             return True
     return False
+
+
+def _get_constraint_key_type(lines, base):
+    """Return keyType value for the key constraint at the given policy prefix."""
+    key_type_key = base + 'keyType'
+    for line in lines:
+        k, val = _parse_property_line(line)
+        if k == key_type_key:
+            return (val or '').strip()
+    return ''
 
 
 def _remove_constraint_key_type_at_base(pf, base, basename):
@@ -117,8 +130,9 @@ def _migrate_profile_inplace(pf):
         # keyType usually precedes keyParameters; removing it first would
         # shift default.class_id up and insert allowedKeys after it.
         insert_pos = i
+        key_type = _get_constraint_key_type(pf.lines, base)
         for part in value.split(','):
-            classified = classify_key_parameter_token(part)
+            classified = classify_key_parameter_token(part, key_type)
             if classified is None:
                 continue
             family, inner = classified
