@@ -61,8 +61,10 @@ public class SSLSocketFactory implements LayeredConnectionSocketFactory {
 
         String certNickname = connection.getConfig().getCertNickname();
         if (certNickname != null) {
-            PKIConnection.logger.info("Client certificate: "+certNickname);
-            socket.setClientCertNickname(certNickname);
+            String resolvedNickname = ClientCertNickname.resolve(connection.getConfig());
+            PKIConnection.logger.debug("Client certificate nickname: " + certNickname);
+            PKIConnection.logger.info("Client certificate: " + resolvedNickname);
+            socket.setClientCertNickname(resolvedNickname);
         }
 
         socket.addSocketListener(new SSLSocketListener() {
