@@ -7,11 +7,7 @@ package org.dogtagpki.client;
 
 import java.io.IOException;
 
-import org.mozilla.jss.CryptoManager;
 import org.mozilla.jss.crypto.CryptoToken;
-import org.mozilla.jss.crypto.ObjectNotFoundException;
-import org.mozilla.jss.crypto.X509Certificate;
-import org.mozilla.jss.pkcs11.PK11Cert;
 
 import com.netscape.certsrv.client.ClientConfig;
 import com.netscape.cmsutil.crypto.CryptoUtil;
@@ -43,50 +39,16 @@ public class ClientCertNickname {
         }
 
         try {
-            CryptoManager manager = CryptoManager.getInstance();
-            X509Certificate cert = manager.findCertByNickname(nickname);
-            if (cert == null) {
-                throw new IOException("Certificate not found: " + nickname);
+            String tokenName = configuredTokenName;
+            if (tokenName == null || tokenName.isEmpty()) {
+                tokenName = CryptoUtil.INTERNAL_TOKEN_NAME;
             }
 
-            CryptoToken owningToken;
-            if (cert instanceof PK11Cert pk11Cert) {
-                owningToken = pk11Cert.getOwningToken();
-            } else {
-                owningToken = manager.getInternalKeyStorageToken();
-            }
-
-            if (configuredTokenName != null && !configuredTokenName.isEmpty()) {
-                if (!tokensMatch(configuredTokenName, owningToken)) {
-                    throw new IOException(
-                            "Configured token '" + configuredTokenName
-                            + "' does not match certificate token '"
-                            + owningToken.getName() + "' for nickname '" + nickname + "'");
-                }
-            }
-
-            return owningToken.getName() + ":" + nickname;
-
-        } catch (ObjectNotFoundException e) {
-            throw new IOException("Certificate not found: " + nickname, e);
-
-        } catch (IOException e) {
-            throw e;
+            CryptoToken token = CryptoUtil.getKeyStorageToken(tokenName);
+            return token.getName() + ":" + nickname;
 
         } catch (Exception e) {
             throw new IOException("Unable to resolve client certificate nickname: " + e.getMessage(), e);
         }
-    }
-
-    private static boolean tokensMatch(String configuredTokenName, CryptoToken owningToken)
-            throws Exception {
-
-        if (CryptoUtil.isInternalToken(configuredTokenName)) {
-            CryptoToken internal = CryptoManager.getInstance().getInternalKeyStorageToken();
-            return internal.equals(owningToken);
-        }
-
-        CryptoToken configured = CryptoUtil.getKeyStorageToken(configuredTokenName);
-        return configured.equals(owningToken);
     }
 }
