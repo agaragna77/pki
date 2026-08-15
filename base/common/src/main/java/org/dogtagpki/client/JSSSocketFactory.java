@@ -57,12 +57,6 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
     @Override
     public Socket createLayeredSocket(Socket socket, String remoteHost, int port, HttpContext context)
             throws IOException, UnknownHostException {
-
-        if (connection.getConfig().getCertNickname() != null) {
-            return new org.dogtagpki.client.SSLSocketFactory(connection)
-                    .createLayeredSocket(socket, remoteHost, port, context);
-        }
-
         JSSSocket jssSocket;
 
         SSLSocketFactory socketFactory;
@@ -109,6 +103,12 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
         }
 
         jssSocket.setUseClientMode(true);
+
+        String certNickname = connection.getConfig().getCertNickname();
+        if (certNickname != null) {
+            logger.debug("JSSSocketFactory: - client certificate: " + certNickname);
+            jssSocket.setCertFromAlias(certNickname);
+        }
 
         jssSocket.setListeners(Arrays.asList(new SSLSocketListener() {
 
