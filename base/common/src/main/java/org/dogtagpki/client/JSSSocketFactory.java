@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 
@@ -27,7 +28,9 @@ import org.mozilla.jss.provider.javax.crypto.JSSTrustManager;
 import org.mozilla.jss.ssl.SSLAlertDescription;
 import org.mozilla.jss.ssl.SSLAlertEvent;
 import org.mozilla.jss.ssl.SSLAlertLevel;
+import org.mozilla.jss.ssl.SSLCertificateApprovalCallback;
 import org.mozilla.jss.ssl.SSLHandshakeCompletedEvent;
+import org.mozilla.jss.ssl.SSLSocket;
 import org.mozilla.jss.ssl.SSLSocketListener;
 import org.mozilla.jss.ssl.javax.JSSSocket;
 
@@ -57,6 +60,56 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
     @Override
     public Socket createLayeredSocket(Socket socket, String remoteHost, int port, HttpContext context)
             throws IOException, UnknownHostException {
+
+        if (connection.getConfig().getCertNickname() != null) {
+            return createNativeClientAuthSocket(socket, remoteHost, port);
+        }
+
+        return createJSSSocket(socket, remoteHost, port);
+    }
+
+    private Socket createNativeClientAuthSocket(Socket socket, String remoteHost, int port)
+            throws IOException {
+
+        try {
+            CryptoManager.getInstance();
+
+            SSLCertificateApprovalCallback callback =
+                    ClientSSLApprovalCallback.create(connection, remoteHost);
+
+            SSLSocket sslSocket;
+            if (socket == null) {
+                logger.debug("JSSSocketFactory: Creating native SSL socket");
+                sslSocket = new SSLSocket(remoteHost, port, null, 0, callback, null);
+            } else {
+                logger.debug("JSSSocketFactory: Creating native SSL socket with existing socket");
+                sslSocket = new SSLSocket(socket, remoteHost, callback, null);
+            }
+
+            sslSocket.setUseClientMode(true);
+
+            String certNickname = connection.getConfig().getCertNickname();
+            String resolvedNickname = ClientCertNickname.resolve(connection.getConfig());
+            logger.debug("JSSSocketFactory: - client certificate: " + certNickname);
+            logger.info("Client certificate: " + resolvedNickname);
+            sslSocket.setClientCertNickname(resolvedNickname);
+
+            addSocketListener(sslSocket);
+            sslSocket.forceHandshake();
+            return sslSocket;
+
+        } catch (SocketException e) {
+            throw new IOException("Unable to configure client certificate: " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Unable to create SSL socket: " + e.getMessage(), e);
+        }
+    }
+
+    private Socket createJSSSocket(Socket socket, String remoteHost, int port)
+            throws IOException {
+
         JSSSocket jssSocket;
 
         SSLSocketFactory socketFactory;
@@ -103,14 +156,17 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
         }
 
         jssSocket.setUseClientMode(true);
+        jssSocket.setListeners(Arrays.asList(createSocketListener()));
+        jssSocket.startHandshake();
+        return jssSocket;
+    }
 
-        String certNickname = connection.getConfig().getCertNickname();
-        if (certNickname != null) {
-            logger.debug("JSSSocketFactory: - client certificate: " + certNickname);
-            jssSocket.setCertFromAlias(certNickname);
-        }
+    private static void addSocketListener(SSLSocket socket) {
+        socket.addSocketListener(createSocketListener());
+    }
 
-        jssSocket.setListeners(Arrays.asList(new SSLSocketListener() {
+    private static SSLSocketListener createSocketListener() {
+        return new SSLSocketListener() {
 
             @Override
             public void alertReceived(SSLAlertEvent event) {
@@ -143,12 +199,8 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
             @Override
             public void handshakeCompleted(SSLHandshakeCompletedEvent event) {
             }
-        }));
-
-        jssSocket.startHandshake();
-        return jssSocket;
+        };
     }
-
 
     @Override
     public Socket connectSocket(
