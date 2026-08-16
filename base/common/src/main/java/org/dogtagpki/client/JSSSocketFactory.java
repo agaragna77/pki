@@ -66,6 +66,7 @@ public class JSSSocketFactory implements LayeredConnectionSocketFactory {
             KeyManager[] kms = kmf.getKeyManagers();
 
             ClientJSSTrustManager trustManager = new ClientJSSTrustManager();
+            trustManager.setClientConfig(connection.getConfig());
             trustManager.setHostname(remoteHost);
             trustManager.setCallback(connection.getCallback());
             trustManager.setEnableCertRevokeVerify(connection.getConfig().isCertRevocationVerify());
