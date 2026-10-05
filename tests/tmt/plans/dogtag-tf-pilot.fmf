@@ -1,0 +1,56 @@
+summary: Dogtag Testing Farm pilot (3 tests, one guest, build once)
+description: |
+  TF counterpart to dogtag-libvirt-pilot for IDM-8254.
+
+  Testing Farm provisions the VM; this plan uses provision:local,
+  installs Docker, builds pki-runner once, then runs ca-basic,
+  kra-basic, and pki-basic sequentially on that guest.
+discover:
+    how: fmf
+    test:
+        - /tests/tmt/ca-basic-test
+        - /tests/tmt/kra-basic-test
+        - /tests/tmt/pki-basic-test
+provision:
+    how: local
+prepare:
+    - name: ensure-docker
+      how: shell
+      script:
+        - |
+          set -euo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "==== Installing Docker (moby-engine) ===="
+            dnf install -y moby-engine containerd
+          fi
+          systemctl enable --now docker
+          docker info >/dev/null
+          echo "==== Docker ready ===="
+          docker version
+    - name: build-pki-runner
+      how: shell
+      script:
+        - |
+          set -euo pipefail
+          if docker image inspect pki-runner >/dev/null 2>&1; then
+            echo "==== pki-runner already present ===="
+            docker images pki-runner
+            exit 0
+          fi
+          echo "==== Building pki-runner once ===="
+          "${TMT_TREE}/tests/tmt/bin/build-pki-runner.sh" "${TMT_TREE}"
+execute:
+    how: tmt
+finish:
+    how: shell
+    script:
+      - |
+        docker rm -f pki ds 2>/dev/null || true
+        docker volume rm ds-data 2>/dev/null || true
+        docker network rm example 2>/dev/null || true
+tag:
+    - dogtag
+    - idm-8254
+    - tf-pilot
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
