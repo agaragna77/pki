@@ -14,8 +14,14 @@ prepare:
       how: shell
       script:
         - |
-          command -v docker >/dev/null \
-            || { echo "ERROR: docker required for ca-secure-ds-test"; exit 1; }
+          set -euo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "==== Installing Docker (moby-engine) ===="
+            dnf install -y moby-engine containerd
+          fi
+          systemctl enable --now docker
+          docker info >/dev/null
+          echo "==== Docker ready ===="
     - name: build-pki-runner
       how: shell
       script:

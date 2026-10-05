@@ -13,14 +13,26 @@ if [[ -z "$REPO_ROOT" || ! -f "$REPO_ROOT/Dockerfile" ]]; then
 fi
 cd "$REPO_ROOT"
 
-if [[ "${SKIP_PKI_BUILD:-0}" == "1" ]]; then
-    echo "SKIP_PKI_BUILD=1 — not building (image must already exist)"
-    docker image inspect pki-runner >/dev/null
-    exit 0
-fi
-
 command -v docker >/dev/null \
     || { echo "ERROR: docker required to build pki-runner" >&2; exit 1; }
+
+# Testing Farm / Quay path: pull a prebuilt image and tag it as pki-runner.
+# Set PKI_IMAGE=quay.io/<ns>/pki-runner:<branch>-<short-sha> and SKIP_PKI_BUILD=1.
+if [[ "${SKIP_PKI_BUILD:-0}" == "1" ]]; then
+    if [[ -n "${PKI_IMAGE:-}" ]]; then
+        echo "SKIP_PKI_BUILD=1 — pulling ${PKI_IMAGE}"
+        docker pull "${PKI_IMAGE}"
+        docker tag "${PKI_IMAGE}" pki-runner
+        docker tag "${PKI_IMAGE}" pki-runner:latest
+    else
+        echo "SKIP_PKI_BUILD=1 — PKI_IMAGE unset; expecting local pki-runner"
+    fi
+    docker image inspect pki-runner >/dev/null \
+        || { echo "ERROR: pki-runner image not found (set PKI_IMAGE or build)" >&2; exit 1; }
+    echo "==== pki-runner image ready (skip build) ===="
+    docker images pki-runner
+    exit 0
+fi
 
 # --- same defaults as tests/bin/test-init.sh ---
 release_branch='^v[0-9]+\.[0-9]+$'
