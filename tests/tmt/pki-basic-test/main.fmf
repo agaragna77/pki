@@ -1,0 +1,14 @@
+summary: Basic PKI CLI (GHA pki-basic-test)
+description: |
+  TMT port of .github/workflows/pki-basic-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - pki
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/pki-basic-test.yml

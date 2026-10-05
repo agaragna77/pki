@@ -1,0 +1,1386 @@
+#!/bin/bash
+# Generated TMT port of .github/workflows/est-postgresql-realm-test.yml
+# Step names match the GHA workflow.
+set -euo pipefail
+
+REPO_ROOT="${TMT_TREE:-}"
+if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/tests" ]]; then
+    REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+fi
+BIN="$REPO_ROOT/tests/bin"
+
+export GITHUB_WORKSPACE="$REPO_ROOT"
+export SHARED="${SHARED:-/tmp/workdir/pki}"
+# GHA persists env vars via $GITHUB_ENV; emulate with a temp file + source.
+export GITHUB_ENV="${TMPDIR:-/tmp}/gha-env-$$"
+touch "$GITHUB_ENV"
+source_gha_env() { set -a; source "$GITHUB_ENV" 2>/dev/null || true; set +a; }
+mkdir -p "$GITHUB_WORKSPACE"
+cd "$GITHUB_WORKSPACE"
+export LC_ALL=C
+
+export DS_IMAGE="quay.io/389ds/dirsrv"
+export SHARED="/tmp/workdir/pki"
+
+PKI_IMAGE="${PKI_IMAGE:-pki-runner}"
+
+# Ensure docker and pki-runner are available
+if ! command -v docker >/dev/null; then
+    echo "ERROR: docker not found" >&2
+    exit 1
+fi
+
+cleanup() {
+    docker rm -f ds pki postgresql 2>/dev/null || true
+    docker volume rm ds-data 2>/dev/null || true
+    docker network rm example 2>/dev/null || true
+}
+trap cleanup EXIT
+
+step() { echo; echo "==== $* ===="; }
+GHA_FAILED=0
+
+step "Install dependencies"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: apt-get install — on Fedora/TMT runner these are available or use dnf
+# Packages needed: podman-docker
+# Most are available in the pki-runner container or Fedora host.
+command -v podman-docker >/dev/null 2>&1 || dnf install -y podman-docker 2>/dev/null || true
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install dependencies (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Clone repository"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: actions/checkout — repo already available as $REPO_ROOT
+echo "Repository available at $REPO_ROOT"
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Clone repository (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Retrieve PKI images"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: actions/cache — images built locally by prepare (build-pki-runner.sh)
+echo "Images built by TMT prepare phase"
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Retrieve PKI images (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Load PKI images"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: docker load from cache — images built locally by prepare
+echo "Images already available (built by TMT prepare)"
+docker image inspect pki-runner >/dev/null 2>&1 || { echo "ERROR: pki-runner image not found"; false; }
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Load PKI images (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Create network"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker network create example
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Create network (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up DS container"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+tests/bin/ds-create.sh \
+    --image=${DS_IMAGE} \
+    --hostname=ds.example.com \
+    --password=Secret.123 \
+    --network=example \
+    --network-alias=ds.example.com \
+    ds
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up DS container (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up PKI container"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+tests/bin/runner-init.sh \
+--hostname=pki.example.com \
+--network=example \
+--network-alias=pki.example.com \
+pki
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up PKI container (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Get Fedora version"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+FEDORA_VERSION=$(docker exec pki sed -n 's/^VERSION_ID=//p' /etc/os-release)
+echo "FEDORA_VERSION=$FEDORA_VERSION" | tee -a $GITHUB_ENV
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Get Fedora version (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+source_gha_env
+fi
+
+step "Get Tomcat flavor"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+TOMCAT_FLAVOR=$(docker exec pki test -f /usr/libexec/tomcat/tomcat-run.sh && echo "new" || echo "old")
+echo "TOMCAT_FLAVOR=$TOMCAT_FLAVOR" | tee -a $GITHUB_ENV
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Get Tomcat flavor (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+source_gha_env
+fi
+
+step "Install CA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkispawn \
+    -f /usr/share/pki/server/examples/installation/ca.cfg \
+    -s CA \
+    -D pki_ds_url=ldap://ds.example.com:3389 \
+    -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install CA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Initialize PKI client"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server cert-export ca_signing --cert-file ca_signing.crt
+
+docker exec pki pki nss-cert-import \
+    --cert ca_signing.crt \
+    --trust CT,C,C \
+    ca_signing
+
+docker exec pki pki pkcs12-import \
+    --pkcs12 /root/.dogtag/pki-tomcat/ca_admin_cert.p12 \
+    --password Secret.123
+
+docker exec pki pki info
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Initialize PKI client (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Create postgresql certificates"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki nss-cert-request \
+    --subject "CN=postgresql.example.com" \
+    --ext /usr/share/pki/server/certs/sslserver.conf \
+    --csr sslserver.csr
+
+docker exec pki pki \
+    -n caadmin \
+    ca-cert-issue \
+    --profile caServerCert \
+    --csr-file sslserver.csr \
+    --subject "CN=postgresql.example.com" \
+    --output-file sslserver.crt
+
+docker exec pki pki nss-cert-import \
+    --cert sslserver.crt \
+    postgresql
+
+docker exec pki pk12util -o sslserver.p12 -n postgresql -d /root/.dogtag/nssdb -W secret
+docker cp pki:sslserver.p12 .
+openssl pkcs12 -in sslserver.p12 -nocerts -out sslserver.key -noenc -password  pass:secret
+openssl pkcs12 -in sslserver.p12 -nokeys -clcerts -out sslserver.crt  -password pass:secret
+openssl pkcs12 -in sslserver.p12 -nokeys -cacerts -out ca.crt  -password pass:secret
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Create postgresql certificates (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Create postgresql Docker file"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+cat > Dockerfile-Postgresql <<EOF
+FROM postgres AS postgres-ssl
+
+# Copy certificates
+COPY sslserver.key /var/lib/postgresql/server.key
+COPY sslserver.crt /var/lib/postgresql/server.crt
+RUN chown postgres:postgres /var/lib/postgresql/server.crt && \
+chown postgres:postgres /var/lib/postgresql/server.key && \
+chmod 600 /var/lib/postgresql/server.key
+EOF
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Create postgresql Docker file (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Build postgrsql image with certificates"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: docker/build-push-action — translated to docker build
+docker build -f Dockerfile-Postgresql -t postgres-ssl .
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Build postgrsql image with certificates (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Deploy postgresql"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker run \
+    --name postgresql \
+    --hostname postgresql.example.com \
+    -e POSTGRES_PASSWORD=mysecretpassword \
+    -e POSTGRES_USER=est \
+    --detach \
+    postgres-ssl \
+    -c ssl=on \
+    -c ssl_cert_file=/var/lib/postgresql/server.crt \
+    -c ssl_key_file=/var/lib/postgresql/server.key
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Deploy postgresql (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Connect DB container to network"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker network connect example postgresql --alias postgresql.example.com
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Connect DB container to network (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up database drivers"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki dnf install -y postgresql-jdbc
+docker exec pki ln -s /usr/share/java/postgresql-jdbc/postgresql.jar /usr/share/pki/server/common/lib
+docker exec pki ln -s /usr/share/java/ongres-scram/scram-client.jar /usr/share/pki/server/common/lib
+docker exec pki ln -s /usr/share/java/ongres-scram/scram-common.jar /usr/share/pki/server/common/lib
+docker exec pki ln -s /usr/share/java/ongres-stringprep/saslprep.jar /usr/share/pki/server/common/lib/
+docker exec pki ln -s /usr/share/java/ongres-stringprep/stringprep.jar /usr/share/pki/server/common/lib/
+docker exec pki pki-server restart --wait
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up database drivers (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up EST user DB"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker cp ./base/est/shared/realm/postgresql/create.sql postgresql:/tmp/create.sql
+docker exec postgresql psql -U est -t -A -f /tmp/create.sql  est
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up EST user DB (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Install EST"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkispawn \
+    -f /usr/share/pki/server/examples/installation/est.cfg \
+    -s EST \
+    -D est_realm_url="jdbc:postgresql://postgresql.example.com:5432/est?ssl=true&sslmode=require" \
+    -D est_realm_type=postgresql \
+    -D est_realm_user=est \
+    -D est_realm_password=mysecretpassword \
+    -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install EST (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check EST backend config"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki cat /etc/pki/pki-tomcat/est/backend.conf
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check EST backend config (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check EST authorizer config"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki cat /etc/pki/pki-tomcat/est/authorizer.conf
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check EST authorizer config (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check EST realm config"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki cat /etc/pki/pki-tomcat/est/realm.conf
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check EST realm config (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check webapps"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server webapp-find | tee output
+
+# CA instance should have ROOT, ca, and pki webapps
+echo "ROOT" > expected
+echo "ca" >> expected
+echo "est" >> expected
+echo "pki" >> expected
+sed -n 's/^ *Webapp ID: *\(.*\)$/\1/p' output > actual
+diff expected actual
+
+docker exec pki pki-server webapp-show ROOT
+docker exec pki pki-server webapp-show ca
+docker exec pki pki-server webapp-show est
+docker exec pki pki-server webapp-show pki
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check webapps (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server base dir after installation"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/lib/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+# TODO: review permissions
+cat > expected_old << EOF
+lrwxrwxrwx pkiuser pkiuser alias -> /var/lib/pki/pki-tomcat/conf/alias
+lrwxrwxrwx pkiuser pkiuser bin -> /usr/share/tomcat/bin
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser common
+lrwxrwxrwx pkiuser pkiuser conf -> /etc/pki/pki-tomcat
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser lib -> /usr/share/pki/server/lib
+lrwxrwxrwx pkiuser pkiuser logs -> /var/log/pki/pki-tomcat
+drwxrwx--- pkiuser pkiuser temp
+drwxrwx--- pkiuser pkiuser webapps
+drwxrwx--- pkiuser pkiuser work
+EOF
+
+cat > expected_new << EOF
+lrwxrwxrwx pkiuser pkiuser alias -> /var/lib/pki/pki-tomcat/conf/alias
+lrwxrwxrwx pkiuser pkiuser bin -> /usr/share/tomcat/bin
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser common
+lrwxrwxrwx pkiuser pkiuser conf -> /etc/pki/pki-tomcat
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser lib -> /usr/share/pki/server/lib
+lrwxrwxrwx pkiuser pkiuser logs -> /var/log/pki/pki-tomcat
+drwxrwx--- pkiuser pkiuser temp
+drwxrwx--- pkiuser pkiuser webapps
+drwxrwx--- pkiuser pkiuser work
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server base dir after installation (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server conf dir after installation"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /etc/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+# TODO: review permissions
+cat > expected_old << EOF
+drwxrwx--- pkiuser pkiuser Catalina
+drwxrwx--- pkiuser pkiuser alias
+drwxrwx--- pkiuser pkiuser ca
+-rw-r--r-- pkiuser pkiuser catalina.policy
+lrwxrwxrwx pkiuser pkiuser catalina.properties -> /usr/share/pki/server/conf/catalina.properties
+drwxrwx--- pkiuser pkiuser certs
+lrwxrwxrwx pkiuser pkiuser context.xml -> /etc/tomcat/context.xml
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser logging.properties -> /usr/share/pki/server/conf/logging.properties
+-rw-rw---- pkiuser pkiuser password.conf
+-rw-rw---- pkiuser pkiuser server.xml
+-rw-rw---- pkiuser pkiuser serverCertNick.conf
+-rw-rw---- pkiuser pkiuser tomcat.conf
+lrwxrwxrwx pkiuser pkiuser web.xml -> /etc/tomcat/web.xml
+EOF
+
+cat > expected_new << EOF
+drwxrwx--- pkiuser pkiuser Catalina
+drwxrwx--- pkiuser pkiuser alias
+drwxrwx--- pkiuser pkiuser ca
+-rw-r--r-- pkiuser pkiuser catalina.policy
+lrwxrwxrwx pkiuser pkiuser catalina.properties -> /usr/share/pki/server/conf/catalina.properties
+drwxrwx--- pkiuser pkiuser certs
+lrwxrwxrwx pkiuser pkiuser context.xml -> /etc/tomcat/context.xml
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser logging.properties -> /usr/share/pki/server/conf/logging.properties
+-rw-rw---- pkiuser pkiuser password.conf
+-rw-rw---- pkiuser pkiuser server.xml
+-rw-rw---- pkiuser pkiuser serverCertNick.conf
+-rw-rw---- pkiuser pkiuser tomcat.conf
+lrwxrwxrwx pkiuser pkiuser web.xml -> /etc/tomcat/web.xml
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server conf dir after installation (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server logs dir after installation"
+if [[ "$GHA_FAILED" -eq 0 ]] && [[ "${FEDORA_VERSION}" -lt 43 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/log/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+DATE=$(date +'%Y-%m-%d')
+
+# TODO: review permissions
+cat > expected << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r--r-- pkiuser pkiuser localhost.$DATE.log
+-rw-r--r-- pkiuser pkiuser localhost_access_log.$DATE.txt
+drwxr-xr-x pkiuser pkiuser pki
+EOF
+
+diff expected output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server logs dir after installation (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server logs dir after installation"
+if [[ "$GHA_FAILED" -eq 0 ]] && [[ "${FEDORA_VERSION}" -ge 43 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/log/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+DATE=$(date +'%Y-%m-%d')
+
+# TODO: review permissions
+cat > expected_old << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r--r-- pkiuser pkiuser localhost_access_log.$DATE.txt
+EOF
+
+cat > expected_new << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r----- pkiuser pkiuser localhost_access_log.$DATE.txt
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server logs dir after installation (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check EST conf dir"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /etc/pki/pki-tomcat/est \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+# TODO: review permissions
+cat > expected_old << EOF
+-rw-rw---- pkiuser pkiuser CS.cfg
+-rw-rw---- pkiuser pkiuser authorizer.conf
+-rw-rw---- pkiuser pkiuser backend.conf
+-rw-rw---- pkiuser pkiuser realm.conf
+-rw-rw---- pkiuser pkiuser registry.cfg
+EOF
+
+cat > expected_new << EOF
+-rw-rw---- pkiuser pkiuser CS.cfg
+-rw-rw---- pkiuser pkiuser authorizer.conf
+-rw-rw---- pkiuser pkiuser backend.conf
+-rw-rw---- pkiuser pkiuser realm.conf
+-rw-rw---- pkiuser pkiuser registry.cfg
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check EST conf dir (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Test CA certs"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki curl -o cacert.p7 -k https://pki.example.com:8443/.well-known/est/cacerts
+docker exec pki openssl base64 -d --in cacert.p7 --out cacert.p7.der
+docker exec pki openssl pkcs7 --in cacert.p7.der -inform DER -print_certs -quiet -out cacert.pem
+docker exec pki openssl x509 -in cacert.pem -text -noout | tee actual
+docker exec pki openssl x509 -in ca_signing.crt -text -noout | tee expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Test CA certs (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Add EST user"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# The tomcat-digest script does not work with tomcat-10 because some library changes. An explicit
+# classpath is needed to temporary fix the problem
+
+if [ $TOMCAT_FLAVOR == 'new' ]; then
+    echo "New tomcat 10!"
+    DIGEST=$(docker exec pki /usr/share/tomcat/bin/digest.sh Secret.123 | sed 's/.*://')
+else
+    DIGEST=$(docker exec -e CLASSPATH=/usr/share/tomcat/lib/tomcat-servlet-api.jar pki tomcat-digest Secret.123 | sed 's/.*://')
+fi
+
+docker exec postgresql psql -U est -t -A -c "INSERT INTO users VALUES ('est-test-user', 'test.example.com', '$DIGEST');"  est
+docker exec postgresql psql -U est -t -A -c "INSERT INTO group_members VALUES ('EST Users', 'est-test-user');"  est
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Add EST user (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Install est client"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki dnf copr enable -y @pki/libest
+docker exec pki dnf install -y libest
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install est client (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll certificate"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test.example.com -o . -u est-test-user -h Secret.123
+
+docker exec pki openssl base64 -d --in cert-0-0.pkcs7 --out cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in cert-0-0.pkcs7.der -inform DER -print_certs -quiet -out cert.pem
+docker exec pki openssl x509 -in cert.pem -subject -noout | tee actual
+echo "subject=CN=test.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll certificate (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate but using different CN"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs0
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o ./new_certs0 -u est-test-user -h Secret.123 | tee output || true
+
+# Request should fails with authorization error (status code 403)
+STATUS=$(cat output  | sed -nE 's/.* HTTP response HTTP\/1.1 ([[:digit:]]*).*$/\1/p')
+[ "$STATUS" == "403" ]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate but using different CN (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Add certificate to the user"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+VERSION=$(docker exec pki PrettyPrintCert cert.pem | sed -n 's/\s*Version:\s*v3/2/p')
+SERIAL_HEX=$(docker exec pki PrettyPrintCert cert.pem | sed -n 's/\s*Serial Number:\s*0x\(.*\)/\1/p')
+SERIAL=$(python3 -c 'print(int("'$SERIAL_HEX'", 16))')
+ISSUER=$(docker exec pki PrettyPrintCert cert.pem | sed -n 's/\s*Issuer:\s*\(.*\)/\1/p' | sed 's/, /,/g')
+SUBJECT=$(docker exec pki PrettyPrintCert cert.pem | sed -n 's/\s*Subject:\s*\(.*\)/\1/p' | sed 's/, /,/g')
+
+docker exec pki openssl x509 -in cert.pem -outform DER -out cert.der
+docker cp pki:cert.der .
+docker cp cert.der postgresql:/cert.der
+
+docker exec postgresql psql -U est -t -A -c \
+    "INSERT INTO user_certs VALUES ('est-test-user', '$VERSION;$SERIAL;$ISSUER;$SUBJECT', pg_read_binary_file('/cert.der'));" \
+    est
+
+docker exec postgresql psql -U est -t -A -c "SELECT * FROM user_certs;"  est
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Add certificate to the user (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test.example.com -o ./new_certs -c cert.pem -k key-x-x.pem
+
+docker exec pki openssl base64 -d --in new_certs/cert-0-0.pkcs7 --out new_certs/cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in new_certs/cert-0-0.pkcs7.der -inform DER \
+    -print_certs -quiet -out new_certs/cert.pem
+docker exec pki openssl x509 -in new_certs/cert.pem -subject -noout | tee actual
+echo "subject=CN=test.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Re-Enroll new certificate with certificate"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir re_certs
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -r -s pki.example.com -p 8443 \
+    -o ./re_certs -c cert.pem -k key-x-x.pem
+
+docker exec pki openssl base64 -d --in re_certs/cert-0-0.pkcs7 --out re_certs/cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in re_certs/cert-0-0.pkcs7.der -inform DER -print_certs -quiet -out re_certs/cert.pem
+docker exec pki openssl x509 -in re_certs/cert.pem -subject -noout | tee actual
+echo "subject=CN=test.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Re-Enroll new certificate with certificate (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate but using different subject"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs2
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o ./new_certs2 -c cert.pem -k key-x-x.pem | tee output || true
+
+# Request should fails with authorization error (status code 403)
+STATUS=$(cat output  | sed -nE 's/.* HTTP response HTTP\/1.1 ([[:digit:]]*).*$/\1/p')
+[ "$STATUS" == "403" ]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate but using different subject (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Disable EST subject for enroll"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki cat /etc/pki/pki-tomcat/est/authorizer.conf > authorizer.conf
+echo "enrollMatchTLSSubjSAN=false" >> authorizer.conf
+docker cp authorizer.conf pki:/etc/pki/pki-tomcat/est/authorizer.conf
+
+docker exec pki pki-server restart --wait
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Disable EST subject for enroll (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll certificate with user/password but using different subject and EST check disabled"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs3
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o new_certs3 -u est-test-user -h Secret.123 | tee output || true
+
+# Request should fails with bad request error (status code 400, BAD REQUEST)
+STATUS=$(cat output  | sed -nE 's/.* HTTP response from EST server was (.*)$/\1/p')
+[ "$STATUS" == "BAD REQUEST" ]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll certificate with user/password but using different subject and EST check disabled (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate but using different subject and EST check disabled"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs4
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o ./new_certs4 -c cert.pem -k key-x-x.pem  | tee output || true
+
+# Request should fails with bad request error (status code 404)
+STATUS=$(cat output  | sed -nE 's/.* HTTP response from EST server was (.*)$/\1/p')
+[ "$STATUS" == "BAD REQUEST" ]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate but using different subject and EST check disabled (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Create CA agent user with est-test-user cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki -n caadmin ca-user-add estagent -fullName "EST Agent" --password Secret.123
+docker exec pki pki -n caadmin ca-user-membership-add estagent "Certificate Manager Agents"
+docker exec pki pki -n caadmin ca-user-cert-add estagent --serial $(docker exec pki PrettyPrintCert cert.pem | sed -n 's/\s*Serial Number:\s*0x\(.*\)/0x\1/p')
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Create CA agent user with est-test-user cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll certificate with user/password but using different subject and EST check disabled"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o new_certs3 -u est-test-user -h Secret.123 | tee output || true
+
+# Request should fails with bad request error (status code 400, BAD REQUEST)
+STATUS=$(cat output  | sed -nE 's/.* HTTP response from EST server was (.*)$/\1/p')
+[ "$STATUS" == "BAD REQUEST" ]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll certificate with user/password but using different subject and EST check disabled (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate but using different subject and EST check disabled and agent client"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o ./new_certs4 -c cert.pem -k key-x-x.pem
+
+docker exec pki openssl base64 -d --in new_certs4/cert-0-0.pkcs7 --out new_certs4/cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in new_certs4/cert-0-0.pkcs7.der -inform DER -print_certs -quiet -out new_certs4/cert.pem
+docker exec pki openssl x509 -in new_certs4/cert.pem -subject -noout | tee actual
+echo "subject=CN=test-new.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate but using different subject and EST check disabled and agent client (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Remove agent"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki -n caadmin ca-user-del estagent
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Remove agent (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Modify CA Subject Name policy"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# The profile constraint for subject name is modified replacing the raClientAuthSubjectNameConstraintImpl,
+# which verify the subject against the client identity, with subjectNameConstraintImpl to skip the check 
+docker exec pki sed -i 's/policyset.serverCertSet.list=1,2,3,4,6,7,8,10,20,22/policyset.serverCertSet.list=1,2,3,4,6,7,8,10,21,22/g' \
+    /etc/pki/pki-tomcat/ca/profiles/ca/estServiceCert.cfg
+
+docker exec pki pki-server restart --wait
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Modify CA Subject Name policy (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll certificate with user/password but using different subject, check disabled and no CA Subject contraint"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o new_certs3 -u est-test-user -h Secret.123
+
+docker exec pki openssl base64 -d --in new_certs3/cert-0-0.pkcs7 --out new_certs3/cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in new_certs3/cert-0-0.pkcs7.der -inform DER -print_certs -quiet -out new_certs3/cert.pem
+docker exec pki openssl x509 -in new_certs3/cert.pem -subject -noout | tee actual
+echo "subject=CN=test-new.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll certificate with user/password but using different subject, check disabled and no CA Subject contraint (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll new certificate with certificate but using different subject and check disabled and no CA Subject contraint"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki mkdir new_certs5
+docker exec -e EST_OPENSSL_CACERT=cacert.pem pki estclient -e -s pki.example.com -p 8443 \
+    --common-name test-new.example.com -o ./new_certs5 -c cert.pem -k key-x-x.pem
+
+docker exec pki openssl base64 -d --in new_certs5/cert-0-0.pkcs7 --out new_certs5/cert-0-0.pkcs7.der
+docker exec pki openssl pkcs7 -in new_certs5/cert-0-0.pkcs7.der -inform DER -print_certs -quiet -out new_certs5/cert.pem
+docker exec pki openssl x509 -in new_certs5/cert.pem -subject -noout | tee actual
+echo "subject=CN=test-new.example.com" > expected
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll new certificate with certificate but using different subject and check disabled and no CA Subject contraint (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Remove EST"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkidestroy -i pki-tomcat -s EST -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Remove EST (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Remove CA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkidestroy -i pki-tomcat -s CA -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Remove CA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server base dir after removal"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/lib/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+# TODO: review permissions
+cat > expected_old << EOF
+lrwxrwxrwx pkiuser pkiuser conf -> /etc/pki/pki-tomcat
+lrwxrwxrwx pkiuser pkiuser logs -> /var/log/pki/pki-tomcat
+EOF
+
+cat > expected_new << EOF
+lrwxrwxrwx pkiuser pkiuser conf -> /etc/pki/pki-tomcat
+lrwxrwxrwx pkiuser pkiuser logs -> /var/log/pki/pki-tomcat
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server base dir after removal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server conf dir after removal"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /etc/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+# TODO: review permissions
+cat > expected_old << EOF
+drwxrwx--- pkiuser pkiuser Catalina
+drwxrwx--- pkiuser pkiuser alias
+drwxrwx--- pkiuser pkiuser ca
+-rw-r--r-- pkiuser pkiuser catalina.policy
+lrwxrwxrwx pkiuser pkiuser catalina.properties -> /usr/share/pki/server/conf/catalina.properties
+drwxrwx--- pkiuser pkiuser certs
+lrwxrwxrwx pkiuser pkiuser context.xml -> /etc/tomcat/context.xml
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser logging.properties -> /usr/share/pki/server/conf/logging.properties
+-rw-rw---- pkiuser pkiuser password.conf
+-rw-rw---- pkiuser pkiuser server.xml
+-rw-rw---- pkiuser pkiuser serverCertNick.conf
+-rw-rw---- pkiuser pkiuser tomcat.conf
+lrwxrwxrwx pkiuser pkiuser web.xml -> /etc/tomcat/web.xml
+EOF
+
+cat > expected_new << EOF
+drwxrwx--- pkiuser pkiuser Catalina
+drwxrwx--- pkiuser pkiuser alias
+drwxrwx--- pkiuser pkiuser ca
+-rw-r--r-- pkiuser pkiuser catalina.policy
+lrwxrwxrwx pkiuser pkiuser catalina.properties -> /usr/share/pki/server/conf/catalina.properties
+drwxrwx--- pkiuser pkiuser certs
+lrwxrwxrwx pkiuser pkiuser context.xml -> /etc/tomcat/context.xml
+drwxrwx--- pkiuser pkiuser est
+lrwxrwxrwx pkiuser pkiuser logging.properties -> /usr/share/pki/server/conf/logging.properties
+-rw-rw---- pkiuser pkiuser password.conf
+-rw-rw---- pkiuser pkiuser server.xml
+-rw-rw---- pkiuser pkiuser serverCertNick.conf
+-rw-rw---- pkiuser pkiuser tomcat.conf
+lrwxrwxrwx pkiuser pkiuser web.xml -> /etc/tomcat/web.xml
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server conf dir after removal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server logs dir after removal"
+if [[ "$GHA_FAILED" -eq 0 ]] && [[ "${FEDORA_VERSION}" -lt 43 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/log/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+DATE=$(date +'%Y-%m-%d')
+
+# TODO: review permissions
+cat > expected << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r--r-- pkiuser pkiuser localhost.$DATE.log
+-rw-r--r-- pkiuser pkiuser localhost_access_log.$DATE.txt
+drwxr-xr-x pkiuser pkiuser pki
+EOF
+
+diff expected output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server logs dir after removal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server logs dir after removal"
+if [[ "$GHA_FAILED" -eq 0 ]] && [[ "${FEDORA_VERSION}" -ge 43 ]]; then
+set +e
+(
+set -euo pipefail
+# check file types, owners, and permissions
+docker exec pki ls -l /var/log/pki/pki-tomcat \
+    | sed \
+        -e '/^total/d' \
+        -e 's/^\(\S*\)\./\1/' \
+        -e 's/^\(\S*\) *\S* *\(\S*\) *\(\S*\) *\S* *\S* *\S* *\S* *\(.*\)$/\1 \2 \3 \4/' \
+    | tee output
+
+DATE=$(date +'%Y-%m-%d')
+
+# TODO: review permissions
+cat > expected_old << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r--r-- pkiuser pkiuser localhost_access_log.$DATE.txt
+EOF
+
+cat > expected_new << EOF
+drwxrwx--- pkiuser pkiuser backup
+drwxrwx--- pkiuser pkiuser ca
+drwxrwx--- pkiuser pkiuser est
+-rw-r----- pkiuser pkiuser localhost_access_log.$DATE.txt
+EOF
+
+diff expected_$TOMCAT_FLAVOR output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server logs dir after removal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check DS server systemd journal"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec ds journalctl -x --no-pager -u dirsrv@localhost.service
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check DS server systemd journal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check DS container logs"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker logs ds
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check DS container logs (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check PKI server systemd journal"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki journalctl -x --no-pager -u pki-tomcatd@pki-tomcat.service
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server systemd journal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check CA debug log"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki find /var/lib/pki/pki-tomcat/logs/ca -name "debug.*" -exec cat {} \;
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check CA debug log (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check EST debug log"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki find /var/lib/pki/pki-tomcat/logs/est -name "debug.*" -exec cat {} \;
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check EST debug log (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+if [[ "$GHA_FAILED" -ne 0 ]]; then
+    echo "==== est-postgresql-realm-test FAILED ===="
+    exit "$GHA_FAILED"
+fi
+echo "==== est-postgresql-realm-test PASSED ===="

@@ -1,0 +1,14 @@
+summary: SubCA with PQC (GHA subca-pqc-test)
+description: |
+  TMT port of .github/workflows/subca-pqc-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - subca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/subca-pqc-test.yml

@@ -1,0 +1,14 @@
+summary: LWCA with HSM (GHA lwca-hsm-test)
+description: |
+  TMT port of .github/workflows/lwca-hsm-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - lwca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/lwca-hsm-test.yml

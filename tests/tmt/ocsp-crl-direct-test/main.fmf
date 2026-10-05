@@ -1,0 +1,14 @@
+summary: OCSP with direct CRL publishing (GHA ocsp-crl-direct-test)
+description: |
+  TMT port of .github/workflows/ocsp-crl-direct-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ocsp
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ocsp-crl-direct-test.yml

@@ -1,0 +1,14 @@
+summary: Basic ACME container (GHA acme-container-basic-test)
+description: |
+  TMT port of .github/workflows/acme-container-basic-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - acme
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/acme-container-basic-test.yml

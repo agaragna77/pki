@@ -1,0 +1,39 @@
+summary: HTTPS connector with Kryoptic HSM (PQC)
+description: |
+  TMT port of .github/workflows/server-https-kryoptic-pqc-test.yml.
+  Prepare builds pki-runner from the Dockerfile (same as GHA).
+  See tests/tmt/server-https-kryoptic-pqc-test/README.md
+discover:
+    how: fmf
+    test:
+        - /tests/tmt/server-https-kryoptic-pqc-test
+provision:
+    how: local
+prepare:
+    - name: require-docker
+      how: shell
+      script:
+        - |
+          command -v docker >/dev/null \
+            || { echo "ERROR: docker required for server-https-kryoptic-pqc-test"; exit 1; }
+    - name: build-pki-runner
+      how: shell
+      script:
+        - |
+          "${TMT_TREE}/tests/tmt/bin/build-pki-runner.sh" "${TMT_TREE}"
+execute:
+    how: tmt
+finish:
+    how: shell
+    script:
+      - |
+        docker rm -f pki ds 2>/dev/null || true
+        docker volume rm ds-data 2>/dev/null || true
+        docker network rm example 2>/dev/null || true
+tag:
+    - server
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - relates: https://github.com/dogtagpki/pki/blob/master/.github/workflows/server-https-kryoptic-pqc-test.yml

@@ -1,0 +1,14 @@
+summary: Basic server (GHA server-basic-test)
+description: |
+  TMT port of .github/workflows/server-basic-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - server
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/server-basic-test.yml

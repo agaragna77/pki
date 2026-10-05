@@ -1,0 +1,78 @@
+summary: Dogtag libvirt pilot (3 tests, one VM)
+description: |
+  Single-VM libvirt pilot for IDM-8254: discover exactly three Dogtag
+  tests so prepare/build runs once on one guest.
+
+  Preferred set: ca-basic-test, kra-basic-test, pki-basic-test.
+
+  Prepare installs/starts Docker in the guest, then loads a prebuilt
+  pki-runner image from /var/tmp/pki-runner.tar (copied from the host
+  when present) or builds once via build-pki-runner.sh.
+discover:
+    how: fmf
+    test:
+        - /tests/tmt/ca-basic-test
+        - /tests/tmt/kra-basic-test
+        - /tests/tmt/pki-basic-test
+provision:
+    how: virtual
+    image: fedora
+    # session virtqemud may inherit NoNewPrivs from Cursor sandbox and then
+    # fail with: cannot execute binary qemu-system-x86_64: Operation not permitted.
+    # system uses the privileged virtqemud (user must be in libvirt group).
+    connection: system
+    memory: 8192
+    disk: 40
+prepare:
+    - name: ensure-docker
+      how: shell
+      script:
+        - |
+          set -euo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "==== Installing Docker (moby-engine) ===="
+            dnf install -y moby-engine containerd
+          fi
+          systemctl enable --now docker
+          docker info >/dev/null
+          echo "==== Docker ready ===="
+          docker version
+    - name: copy-pki-runner-tar
+      how: ansible
+      playbook:
+          # Relative to metadata root (repo root); bare filename resolves there, not plans/.
+          - tests/tmt/plans/dogtag-libvirt-pilot-copy-image.yml
+    - name: load-or-build-pki-runner
+      how: shell
+      script:
+        - |
+          set -euo pipefail
+          if docker image inspect pki-runner >/dev/null 2>&1; then
+            echo "==== pki-runner already present in guest ===="
+            docker images pki-runner
+            exit 0
+          fi
+          if [[ -f /var/tmp/pki-runner.tar ]]; then
+            echo "==== Loading prebuilt pki-runner from /var/tmp/pki-runner.tar ===="
+            docker load -i /var/tmp/pki-runner.tar
+            docker image inspect pki-runner >/dev/null
+            docker images pki-runner
+            exit 0
+          fi
+          echo "==== No prebuilt image; building pki-runner once in guest ===="
+          "${TMT_TREE}/tests/tmt/bin/build-pki-runner.sh" "${TMT_TREE}"
+execute:
+    how: tmt
+finish:
+    how: shell
+    script:
+      - |
+        docker rm -f pki ds 2>/dev/null || true
+        docker volume rm ds-data 2>/dev/null || true
+        docker network rm example 2>/dev/null || true
+tag:
+    - dogtag
+    - idm-8254
+    - libvirt-pilot
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254

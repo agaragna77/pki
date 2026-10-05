@@ -1,0 +1,14 @@
+summary: IPA with Sub-CA (GHA ipa-subca-test)
+description: |
+  TMT port of .github/workflows/ipa-subca-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ipa
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ipa-subca-test.yml

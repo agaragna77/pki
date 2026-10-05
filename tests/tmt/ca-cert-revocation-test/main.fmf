@@ -1,0 +1,14 @@
+summary: CA cert revocation (GHA ca-cert-revocation-test)
+description: |
+  TMT port of .github/workflows/ca-cert-revocation-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-cert-revocation-test.yml

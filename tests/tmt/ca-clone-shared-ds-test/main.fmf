@@ -1,0 +1,14 @@
+summary: CA clone with shared DS (GHA ca-clone-shared-ds-test)
+description: |
+  TMT port of .github/workflows/ca-clone-shared-ds-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-clone-shared-ds-test.yml

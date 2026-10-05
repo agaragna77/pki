@@ -1,0 +1,17 @@
+---
+# Copy host-prebuilt pki-runner.tar into the guest when present on the controller.
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Check for host pki-runner tar
+      ansible.builtin.stat:
+        path: /var/tmp/pki-runner.tar
+      delegate_to: localhost
+      register: host_tar
+
+    - name: Copy pki-runner.tar into guest
+      ansible.builtin.copy:
+        src: /var/tmp/pki-runner.tar
+        dest: /var/tmp/pki-runner.tar
+        mode: "0644"
+      when: host_tar.stat.exists

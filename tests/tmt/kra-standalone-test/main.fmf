@@ -1,0 +1,14 @@
+summary: Standalone KRA (GHA kra-standalone-test)
+description: |
+  TMT port of .github/workflows/kra-standalone-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - kra
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/kra-standalone-test.yml

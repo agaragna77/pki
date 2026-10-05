@@ -1,0 +1,14 @@
+summary: CA connection with DS (GHA ca-ds-connection-test)
+description: |
+  TMT port of .github/workflows/ca-ds-connection-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-ds-connection-test.yml

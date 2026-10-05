@@ -1,0 +1,14 @@
+summary: IPA reinstall (GHA ipa-reinstall-test)
+description: |
+  TMT port of .github/workflows/ipa-reinstall-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ipa
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ipa-reinstall-test.yml

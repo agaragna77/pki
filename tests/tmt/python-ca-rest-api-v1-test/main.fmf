@@ -1,0 +1,14 @@
+summary: CA Python API with REST API v1 (GHA python-ca-rest-api-v1-test)
+description: |
+  TMT port of .github/workflows/python-ca-rest-api-v1-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - python
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/python-ca-rest-api-v1-test.yml

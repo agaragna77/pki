@@ -1,0 +1,14 @@
+summary: CA with CMC shared token (GHA ca-cmc-shared-token-test)
+description: |
+  TMT port of .github/workflows/ca-cmc-shared-token-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-cmc-shared-token-test.yml

@@ -1,0 +1,14 @@
+summary: KRA clone with replicated DS (GHA kra-clone-replicated-ds-test)
+description: |
+  TMT port of .github/workflows/kra-clone-replicated-ds-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - kra
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/kra-clone-replicated-ds-test.yml

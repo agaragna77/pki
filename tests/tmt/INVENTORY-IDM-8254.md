@@ -1,42 +1,38 @@
-# IDM-8254 — Dogtag GHA → TMT / IPACTA coverage inventory
+# IDM-8254: GHA↔TMT Parity Inventory
 
-Goal: prove IPACTA can replace Dogtag for **CA / KRA / ACME** without feature loss.
-Coverage map = Dogtag **standalone** GHA. Dual repos: this tree (Dogtag TMT) + freeipa (IPACTA TMT).
+## Machine-readable inventory
 
-## Tier 1 — core (implement first)
+- **Local:** `tests/tmt/gha-tmt-inventory.json`
+- **Global report:** `/home/agaragna/Projects/JARVIS/POCs/IDM-8254/dogtag-gha-tmt-global-report.md`
+- **Global inventory JSON:** `/home/agaragna/Projects/JARVIS/POCs/IDM-8254/dogtag-gha-tmt-global-inventory.json`
 
-| GHA | Status | Notes |
-|-----|--------|-------|
-| `ca-basic-test.yml` | **Pilot in progress** — `plans/ca-basic-smoke.fmf` | Smoke subset; expand later |
-| `kra-basic-test.yml` | Next | |
-| `acme-basic-test.yml` | Next | |
+## Tooling
 
-## Tier 2 — Dogtag required; IPACTA attempt + gap-log
+| Script | Purpose |
+|--------|---------|
+| `tests/tmt/bin/inventory-gha-tmt.py` | Scans GHA `*-test.yml`, writes `gha-tmt-inventory.json` |
+| `tests/tmt/bin/generate-tmt-from-gha.py` | Generates TMT plan + test from each GHA workflow |
+| `tests/tmt/bin/report-gha-vs-tmt.py` | Writes per-stem and global comparison reports |
+| `tests/tmt/bin/build-pki-runner.sh` | Builds pki-runner image (TMT prepare phase) |
 
-| Area | GHA (examples) | Dogtag TMT | IPACTA TMT |
-|------|----------------|------------|------------|
-| PQC | `ca-pqc-test.yml`, `kra-pqc-test.yml` | Required | Attempt / gap-log |
-| HSM | `ca-softhsm-test.yml`, `kra-softhsm-test.yml`, `ca-hsm-operation-test.yml` | Required | Attempt / gap-log |
-| Clone | `ca-clone-test.yml`, `kra-clone-test.yml`, `acme-clone-test.yml` | Required | Attempt / gap-log |
-| Profiles | `ca-profile-*.yml` | Required | Attempt / gap-log |
-| Lifecycle | `ca-cert-revocation-test.yml`, `ca-crl-test.yml`, `ca-renewal-*-test.yml` | Required | Attempt / gap-log |
-| Sub-CA / LWCA | `subca-basic-test.yml`, `lwca-basic-test.yml` | Required | Attempt / gap-log |
-| OCSP | `ocsp-basic-test.yml` | Required | Attempt / gap-log |
+## Structure
 
-## Tier 3 — out of IPACTA replacement scope
+Each GHA `*-test.yml` maps to:
 
-| Area | Why |
-|------|-----|
-| TPS / TKS | Smart-card token stack; not FreeIPA CA replacement |
-| EST | Separate enrollment protocol; not in IPACTA |
-| Container / HSM-hardware / Kryoptic / PQC-clone matrix sprawl | Defer unless Tier 1–2 gap forces |
-| `ipa-*.yml` IPA-integrated workflows | IdM integration track (parallel), not standalone map |
-| NSS CLI / server-https / java unit / … | Not CA/KRA/ACME replacement |
+    tests/tmt/plans/<stem>.fmf      — TMT plan (discover/prepare/execute/finish)
+    tests/tmt/<stem>/main.fmf       — test metadata
+    tests/tmt/<stem>/test.sh        — executable test (step banners match GHA)
+    tests/tmt/<stem>/README.md      — human-readable overview
 
-## Three-env check (pilot)
+## Aggregate plan
 
-| Env | How | Status |
-|-----|-----|--------|
-| Dogtag GHA | `.github/workflows/ca-basic-test.yml` | Existing baseline |
-| Dogtag TMT | `plans/ca-basic-smoke.fmf` (this repo) | **PASS** local (`tmt --feeling-safe`, pki-runner:latest) |
-| IPACTA TMT | freeipa `plans/ca-basic-smoke.fmf` | **PASS** local (`freeipa-ipacta:latest`) |
+    tests/tmt/plans/dogtag-gha-parity.fmf   — discovers all idm-8254 + dogtag tagged tests
+
+## Notes
+
+- Hand-ported tests (e.g. ca-basic-test) are preserved by the generator.
+- Generated tests translate GHA steps to shell; GHA-only actions (checkout,
+  cache, docker load) are mapped to local equivalents.
+- Unknown GHA actions produce `exit 1` (fail loudly, never skip).
+- Run `python3 tests/tmt/bin/inventory-gha-tmt.py` to refresh the inventory.
+- Run `python3 tests/tmt/bin/report-gha-vs-tmt.py` to refresh all reports.

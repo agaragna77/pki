@@ -1,0 +1,14 @@
+summary: Java Client (GHA java-client-test)
+description: |
+  TMT port of .github/workflows/java-client-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - java
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/java-client-test.yml

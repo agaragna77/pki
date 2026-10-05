@@ -1,0 +1,14 @@
+summary: ACME with postgresql back-end (GHA acme-postgresql-test)
+description: |
+  TMT port of .github/workflows/acme-postgresql-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - acme
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/acme-postgresql-test.yml

@@ -1,0 +1,14 @@
+summary: Basic TKS (GHA tks-basic-test)
+description: |
+  TMT port of .github/workflows/tks-basic-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - tks
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/tks-basic-test.yml

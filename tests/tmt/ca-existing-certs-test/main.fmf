@@ -1,0 +1,14 @@
+summary: CA with existing certs (GHA ca-existing-certs-test)
+description: |
+  TMT port of .github/workflows/ca-existing-certs-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-existing-certs-test.yml

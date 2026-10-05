@@ -1,0 +1,14 @@
+summary: OCSP with HSM (GHA ocsp-hsm-test)
+description: |
+  TMT port of .github/workflows/ocsp-hsm-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ocsp
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ocsp-hsm-test.yml

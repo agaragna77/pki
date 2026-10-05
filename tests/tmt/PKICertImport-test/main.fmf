@@ -1,0 +1,13 @@
+summary: PKICertImport (GHA PKICertImport-test)
+description: |
+  TMT port of .github/workflows/PKICertImport-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/PKICertImport-test.yml

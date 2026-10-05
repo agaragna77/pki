@@ -1,0 +1,14 @@
+summary: CA with caServerCert profile (GHA ca-profile-caServerCert-test)
+description: |
+  TMT port of .github/workflows/ca-profile-caServerCert-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-profile-caServerCert-test.yml

@@ -1,0 +1,1144 @@
+#!/bin/bash
+# Generated TMT port of .github/workflows/kra-ecc-test.yml
+# Step names match the GHA workflow.
+set -euo pipefail
+
+REPO_ROOT="${TMT_TREE:-}"
+if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/tests" ]]; then
+    REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+fi
+BIN="$REPO_ROOT/tests/bin"
+
+export GITHUB_WORKSPACE="$REPO_ROOT"
+export SHARED="${SHARED:-/tmp/workdir/pki}"
+mkdir -p "$GITHUB_WORKSPACE"
+cd "$GITHUB_WORKSPACE"
+export LC_ALL=C
+
+export DS_IMAGE="quay.io/389ds/dirsrv"
+export SHARED="/tmp/workdir/pki"
+
+PKI_IMAGE="${PKI_IMAGE:-pki-runner}"
+
+# Ensure docker and pki-runner are available
+if ! command -v docker >/dev/null; then
+    echo "ERROR: docker not found" >&2
+    exit 1
+fi
+
+cleanup() {
+    docker rm -f pki 2>/dev/null || true
+    docker volume rm ds-data 2>/dev/null || true
+    docker network rm example 2>/dev/null || true
+}
+trap cleanup EXIT
+
+step() { echo; echo "==== $* ===="; }
+GHA_FAILED=0
+
+step "Clone repository"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: actions/checkout — repo already available as $REPO_ROOT
+echo "Repository available at $REPO_ROOT"
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Clone repository (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Retrieve PKI images"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: actions/cache — images built locally by prepare (build-pki-runner.sh)
+echo "Images built by TMT prepare phase"
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Retrieve PKI images (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Load PKI images"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# GHA: docker load from cache — images built locally by prepare
+echo "Images already available (built by TMT prepare)"
+docker image inspect pki-runner >/dev/null 2>&1 || { echo "ERROR: pki-runner image not found"; false; }
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Load PKI images (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Create network"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker network create example
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Create network (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up DS container"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+tests/bin/ds-create.sh \
+    --image=${DS_IMAGE} \
+    --hostname=ds.example.com \
+    --network=example \
+    --network-alias=ds.example.com \
+    --password=Secret.123 \
+    ds
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up DS container (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Set up PKI container"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+tests/bin/runner-init.sh \
+    --hostname=pki.example.com \
+    --network=example \
+    --network-alias=pki.example.com \
+    pki
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Set up PKI container (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Install CA with EC certs"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkispawn \
+    -f /usr/share/pki/server/examples/installation/ca-ecc.cfg \
+    -s CA \
+    -D pki_ds_url=ldap://ds.example.com:3389 \
+    -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install CA with EC certs (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Install KRA with EC certs"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# docs/installation/kra/Installing_KRA_with_ECC.md
+docker exec pki pkispawn \
+    -f /usr/share/pki/server/examples/installation/kra-ecc.cfg \
+    -s KRA \
+    -D pki_ds_url=ldap://ds.example.com:3389 \
+    -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Install KRA with EC certs (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check transport unit config in KRA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server kra-config-find \
+    | sed -n \
+        -e '/^kra\.transportUnit\./p' \
+    | sort \
+    | tee output
+
+cat > expected << EOF
+kra.transportUnit.nickName=kra_transport
+kra.transportUnit.signingAlgorithm=SHA384withRSA
+EOF
+
+diff expected output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check transport unit config in KRA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check storage unit config in KRA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server kra-config-find \
+    | sed -n \
+        -e '/^kra\.storageUnit\.wrapping\._/d' \
+        -e '/^kra\.storageUnit\./p' \
+    | sort \
+    | tee output
+
+cat > expected << EOF
+kra.storageUnit.nickName=kra_storage
+kra.storageUnit.wrapping.0.payloadEncryptionAlgorithm=DESede
+kra.storageUnit.wrapping.0.payloadEncryptionIV=AQEBAQEBAQE=
+kra.storageUnit.wrapping.0.payloadEncryptionMode=CBC
+kra.storageUnit.wrapping.0.payloadEncryptionPadding=PKCS5Padding
+kra.storageUnit.wrapping.0.payloadWrapAlgorithm=DES3/CBC/Pad
+kra.storageUnit.wrapping.0.payloadWrapIV=AQEBAQEBAQE=
+kra.storageUnit.wrapping.0.sessionKeyKeyGenAlgorithm=DESede
+kra.storageUnit.wrapping.0.sessionKeyLength=168
+kra.storageUnit.wrapping.0.sessionKeyType=DESede
+kra.storageUnit.wrapping.0.sessionKeyWrapAlgorithm=RSA
+kra.storageUnit.wrapping.1.payloadEncryptionAlgorithm=AES
+kra.storageUnit.wrapping.1.payloadEncryptionIVLen=16
+kra.storageUnit.wrapping.1.payloadEncryptionMode=CBC
+kra.storageUnit.wrapping.1.payloadEncryptionPadding=PKCS5Padding
+kra.storageUnit.wrapping.1.payloadWrapAlgorithm=AES KeyWrap/Padding
+kra.storageUnit.wrapping.1.sessionKeyKeyGenAlgorithm=AES
+kra.storageUnit.wrapping.1.sessionKeyLength=128
+kra.storageUnit.wrapping.1.sessionKeyType=AES
+kra.storageUnit.wrapping.1.sessionKeyWrapAlgorithm=RSA
+kra.storageUnit.wrapping.2.payloadEncryptionAlgorithm=AES
+kra.storageUnit.wrapping.2.payloadEncryptionIVLen=16
+kra.storageUnit.wrapping.2.payloadEncryptionMode=CBC
+kra.storageUnit.wrapping.2.payloadEncryptionPadding=PKCS5Padding
+kra.storageUnit.wrapping.2.payloadWrapAlgorithm=AES KeyWrap/Padding
+kra.storageUnit.wrapping.2.sessionKeyLength=256
+kra.storageUnit.wrapping.2.sessionKeyType=AES
+kra.storageUnit.wrapping.choice=1
+EOF
+
+diff expected output
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check storage unit config in KRA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA storage cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl req -text -noout \
+    -in /var/lib/pki/pki-tomcat/conf/certs/kra_storage.csr
+
+docker exec pki pki-server cert-export kra_storage \
+    --cert-file kra_storage.crt
+docker exec pki openssl x509 -text -noout -in kra_storage.crt | tee output
+
+# public key algorithm should be "rsaEncryption"
+echo "rsaEncryption" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+
+# default signing algorithm should not exist
+echo "ERROR: No such parameter: kra.storage.defaultSigningAlgorithm" > expected
+docker exec pki pki-server kra-config-show kra.storage.defaultSigningAlgorithm \
+    > >(tee stdout) 2> >(tee stderr >&2) || true
+diff expected stderr
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA storage cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA transport cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl req -text -noout \
+    -in /var/lib/pki/pki-tomcat/conf/certs/kra_transport.csr
+
+docker exec pki pki-server cert-export kra_transport \
+    --cert-file kra_transport.crt
+docker exec pki openssl x509 -text -noout -in kra_transport.crt | tee output
+
+# public key algorithm should be "rsaEncryption"
+echo "rsaEncryption" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+
+# default signing algorithm should not exist
+echo "ERROR: No such parameter: kra.transport.defaultSigningAlgorithm" > expected
+docker exec pki pki-server kra-config-show kra.transport.defaultSigningAlgorithm \
+    > >(tee stdout) 2> >(tee stderr >&2) || true
+diff expected stderr
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA transport cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA audit signing cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl req -text -noout \
+    -in /var/lib/pki/pki-tomcat/conf/certs/kra_audit_signing.csr
+
+docker exec pki pki-server cert-export kra_audit_signing \
+    --cert-file kra_audit_signing.crt
+docker exec pki openssl x509 -text -noout -in kra_audit_signing.crt | tee output
+
+# public key algorithm should be "id-ecPublicKey"
+echo "id-ecPublicKey" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+
+# default signing algorithm should be "SHA384withEC"
+echo "SHA384withEC" > expected
+docker exec pki pki-server kra-config-show kra.audit_signing.defaultSigningAlgorithm | tee actual
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA audit signing cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check subsystem cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl req -text -noout \
+    -in /var/lib/pki/pki-tomcat/conf/certs/subsystem.csr
+
+docker exec pki pki-server cert-export subsystem \
+    --cert-file subsystem.crt
+docker exec pki openssl x509 -text -noout -in subsystem.crt | tee output
+
+# public key algorithm should be "id-ecPublicKey"
+echo "id-ecPublicKey" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+
+# default signing algorithm should not exist
+echo "ERROR: No such parameter: kra.subsystem.defaultSigningAlgorithm" > expected
+docker exec pki pki-server kra-config-show kra.subsystem.defaultSigningAlgorithm \
+    > >(tee stdout) 2> >(tee stderr >&2) || true
+diff expected stderr
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check subsystem cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check SSL server cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl req -text -noout \
+    -in /var/lib/pki/pki-tomcat/conf/certs/sslserver.csr
+
+docker exec pki pki-server cert-export sslserver \
+    --cert-file sslserver.crt
+docker exec pki openssl x509 -text -noout -in sslserver.crt | tee output
+
+# public key algorithm should be "id-ecPublicKey"
+echo "id-ecPublicKey" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+
+# default signing algorithm should not exist
+echo "ERROR: No such parameter: kra.sslserver.defaultSigningAlgorithm" > expected
+docker exec pki pki-server kra-config-show kra.sslserver.defaultSigningAlgorithm \
+    > >(tee stdout) 2> >(tee stderr >&2) || true
+diff expected stderr
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check SSL server cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA admin cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki openssl x509 -text -noout \
+    -in /root/.dogtag/pki-tomcat/ca_admin.cert | tee output
+
+# public key algorithm should be "id-ecPublicKey"
+echo "id-ecPublicKey" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Public Key Algorithm:\s*\(.*\)$/\1/p" output > actual
+diff expected actual
+
+# signing algorithm should be "ecdsa-with-SHA512"
+echo "ecdsa-with-SHA512" > expected
+sed -n -e "s/\s*$//" -e "s/^\s*Signature Algorithm:\s*\(.*\)$/\1/p" output | uniq > actual
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA admin cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check CA info"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+cat > expected << EOF
+{
+    "ArchivalMechanism": "keywrap",
+    "EncryptionAlgorithm": "AES/CBC/PKCS5Padding",
+    "KeyWrapAlgorithm": "AES KeyWrap/Padding",
+    "RsaPublicKeyWrapAlgorithm": "RSA",
+    "CaRsaPublicKeyWrapAlgorithm": "RSA",
+    "Attributes": {
+        "Attribute": []
+    }
+}
+EOF
+
+docker exec pki curl -ks https://pki.example.com:8443/ca/v2/info \
+    | python -m json.tool \
+    | tee actual
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check CA info (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA info"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+cat > expected << EOF
+{
+    "ArchivalMechanism": "keywrap",
+    "RecoveryMechanism": "keywrap",
+    "EncryptionAlgorithm": "AES/CBC/PKCS5Padding",
+    "WrapAlgorithm": "AES KeyWrap/Padding",
+    "RsaPublicKeyWrapAlgorithm": "RSA",
+    "Attributes": {
+        "Attribute": []
+    }
+}
+EOF
+
+docker exec pki curl -ks https://pki.example.com:8443/kra/v2/info \
+    | python -m json.tool \
+    | tee actual
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA info (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Run PKI healthcheck"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# Retry pki-healthcheck: intermittent NSS load timeout on audit_signing
+hc_ok=0
+for hc_try in 1 2 3; do
+    echo "pki-healthcheck attempt ${hc_try}/3"
+    if (
+    set -euo pipefail
+    docker exec pki pki-healthcheck --failures-only
+    ); then
+        hc_ok=1
+        break
+    fi
+    sleep 5
+done
+[[ "$hc_ok" -eq 1 ]]
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Run PKI healthcheck (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Import CA signing cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server cert-export \
+    --cert-file ca_signing.crt \
+    ca_signing
+
+docker exec pki pki nss-cert-import \
+    --cert ca_signing.crt \
+    --trust CT,C,C \
+    ca_signing
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Import CA signing cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Import KRA transport cert"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki nss-cert-import \
+    --cert kra_transport.crt \
+    kra_transport
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Import KRA transport cert (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check KRA admin"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki pkcs12-import \
+    --pkcs12 /root/.dogtag/pki-tomcat/ca_admin_cert.p12 \
+    --pkcs12-password Secret.123
+docker exec pki pki -n caadmin kra-user-show kraadmin
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA admin (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enable caECUserCert profile"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki-server ca-profile-mod --enable true caECUserCert
+docker exec pki pki-server restart --wait
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enable caECUserCert profile (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll EC cert with key archival using CRMFPopClient"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# generate key and cert request
+docker exec pki CRMFPopClient \
+    -d /root/.dogtag/nssdb \
+    -p "" \
+    -m pki.example.com:8080 \
+    -f caECUserCert \
+    -a ec \
+    -t false \
+    -n UID=testuser1 \
+    -u testuser1 \
+    -r testuser1 \
+    -b kra_transport.crt | tee output
+
+REQUEST_ID=$(sed -n "s/^\s*Request ID:\s*\(\S*\)\s*$/\1/p" output)
+echo "Request ID: $REQUEST_ID"
+
+# issue cert
+docker exec pki pki \
+    -u caadmin \
+    -w Secret.123 \
+    ca-cert-request-approve \
+    --force \
+    $REQUEST_ID | tee output
+
+CERT_ID=$(sed -n "s/^\s*Certificate ID:\s*\(\S*\)\s*$/\1/p" output)
+echo "Cert ID: $CERT_ID"
+
+# import cert
+docker exec pki pki ca-cert-export --output-file testuser1.crt $CERT_ID
+docker exec pki pki nss-cert-import --cert testuser1.crt testuser1
+docker exec pki pki nss-cert-show testuser1 | tee output
+
+# normalize output
+sed \
+    -e '/^ *Serial Number:/d' \
+    -e '/^ *Not Valid Before:/d' \
+    -e '/^ *Not Valid After:/d' \
+    output > actual
+
+cat > expected << EOF
+  Nickname: testuser1
+  Subject DN: UID=testuser1
+  Issuer DN: CN=CA Signing Certificate,OU=pki-tomcat,O=EXAMPLE
+  Trust Flags: u,u,u
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll EC cert with key archival using CRMFPopClient (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check key requests after key archival using CRMFPopClient"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -n caadmin \
+    kra-key-request-find \
+    | tee output
+
+# normalize output
+sed \
+    -e '/-----/d' \
+    -e '/entries matched/d' \
+    -e '/Number of entries returned/d' \
+    -e '/^ *Request ID:/d' \
+    -e '/^ *Key ID:/d' \
+    -e '/^ *Creation Time:/d' \
+    -e '/^ *Modification Time:/d' \
+    output > actual
+
+# there should be 1 key request
+cat > expected << EOF
+  Type: enrollment
+  Status: complete
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check key requests after key archival using CRMFPopClient (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check keys after key archival using CRMFPopClient"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -n caadmin \
+    kra-key-find \
+    | tee output
+
+# normalize output
+sed \
+    -e '/-----/d' \
+    -e '/key(s) matched/d' \
+    -e '/Number of entries returned/d' \
+    -e '/^ *Request ID:/d' \
+    -e '/^ *Key ID:/d' \
+    -e '/^ *Creation Time:/d' \
+    -e '/^ *Modification Time:/d' \
+    output > actual
+
+# there should be 1 key
+cat > expected << EOF
+  Algorithm: 1.2.840.10045.2.1
+  Size: -1
+  Owner: UID=testuser1
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check keys after key archival using CRMFPopClient (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check key record after key archival using CRMFPopClient"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -u kraadmin \
+    -w Secret.123 \
+    kra-key-find \
+    --owner UID=testuser1 \
+    | tee output
+
+HEX_KEY_ID=$(sed -n "s/^\s*Key ID:\s*\(\S*\)$/\1/p" output)
+echo "Key ID: $HEX_KEY_ID"
+
+DEC_KEY_ID=$(python -c "print(int('$HEX_KEY_ID', 16))")
+echo "Dec Key ID: $DEC_KEY_ID"
+
+# get key record
+docker exec pki ldapsearch \
+    -H ldap://ds.example.com:3389 \
+    -x \
+    -D "cn=Directory Manager" \
+    -w Secret.123 \
+    -b "cn=$DEC_KEY_ID,ou=keyRepository,ou=kra,dc=kra,dc=pki,dc=example,dc=com" \
+    -o ldif_wrap=no \
+    -LLL | tee output
+
+# normalize output
+sed \
+    -e '/^$/d' \
+    -e 's/^\(serialno\): .*$/\1: XXXXX/' \
+    -e 's/^\(privateKeyData\):: .*$/\1:: XXXXX/' \
+    -e 's/^\(publicKeyData\):: .*$/\1:: XXXXX/' \
+    -e 's/^\(metaInfo: payloadEncryptionIV\):.*/\1:XXXXX/' \
+    -e 's/^\(dateOfCreate\): .*$/\1: XXXXX/' \
+    -e 's/^\(dateOfModify\): .*$/\1: XXXXX/' \
+    output > actual
+
+cat > expected << EOF
+dn: cn=$DEC_KEY_ID,ou=keyRepository,ou=kra,dc=kra,dc=pki,dc=example,dc=com
+objectClass: top
+objectClass: keyRecord
+keyState: VALID
+serialno: XXXXX
+ownerName: UID=testuser1
+keySize: -1
+algorithm: 1.2.840.10045.2.1
+privateKeyData:: XXXXX
+publicKeyData:: XXXXX
+metaInfo: payloadEncrypted:false
+metaInfo: sessionKeyLength:128
+metaInfo: sessionKeyWrapAlgorithm:RSA
+metaInfo: sessionKeyKeyGenAlgorithm:AES
+metaInfo: payloadEncryptionOID:2.16.840.1.101.3.4.1.2
+metaInfo: payloadEncryptionIV:XXXXX
+metaInfo: payloadWrapAlgorithm:AES KeyWrap/Padding
+metaInfo: EllipticCurve:ANSI X9.62 elliptic curve prime256v1 (aka secp256r1, NIST P-256)
+metaInfo: sessionKeyType:AES
+dateOfCreate: XXXXX
+dateOfModify: XXXXX
+archivedBy: CA-pki.example.com-8443
+cn: $DEC_KEY_ID
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check key record after key archival using CRMFPopClient (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Enroll EC cert with key archival using pki ca-cert-issue"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+# generate key and cert request
+# https://github.com/dogtagpki/pki/wiki/Generating-Certificate-Request-with-PKI-NSS
+docker exec pki pki nss-cert-request \
+    --key-type EC \
+    --curve nistp521 \
+    --type crmf \
+    --subject UID=testuser2 \
+    --transport kra_transport \
+    --csr testuser2.csr
+
+# issue cert
+# https://github.com/dogtagpki/pki/wiki/Issuing-Certificates
+docker exec pki pki \
+    -u caadmin \
+    -w Secret.123 \
+    ca-cert-issue \
+    --request-type crmf \
+    --profile caECUserCert \
+    --subject UID=testuser2 \
+    --csr-file testuser2.csr \
+    --output-file testuser2.crt
+
+# import cert
+docker exec pki pki nss-cert-import --cert testuser2.crt testuser2
+docker exec pki pki nss-cert-show testuser2 | tee output
+
+# normalize output
+sed \
+    -e '/^ *Serial Number:/d' \
+    -e '/^ *Not Valid Before:/d' \
+    -e '/^ *Not Valid After:/d' \
+    output > actual
+
+cat > expected << EOF
+  Nickname: testuser2
+  Subject DN: UID=testuser2
+  Issuer DN: CN=CA Signing Certificate,OU=pki-tomcat,O=EXAMPLE
+  Trust Flags: u,u,u
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Enroll EC cert with key archival using pki ca-cert-issue (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check key requests after key archival using pki ca-cert-issue"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -n caadmin \
+    kra-key-request-find \
+    | tee output
+
+# normalize output
+sed \
+    -e '/-----/d' \
+    -e '/entries matched/d' \
+    -e '/Number of entries returned/d' \
+    -e '/^ *Request ID:/d' \
+    -e '/^ *Key ID:/d' \
+    -e '/^ *Creation Time:/d' \
+    -e '/^ *Modification Time:/d' \
+    output > actual
+
+# there should be 2 key requests
+cat > expected << EOF
+  Type: enrollment
+  Status: complete
+
+  Type: enrollment
+  Status: complete
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check key requests after key archival using pki ca-cert-issue (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check keys after key archival using pki ca-cert-issue"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -n caadmin \
+    kra-key-find \
+    | tee output
+
+# normalize output
+sed \
+    -e '/-----/d' \
+    -e '/key(s) matched/d' \
+    -e '/Number of entries returned/d' \
+    -e '/^ *Request ID:/d' \
+    -e '/^ *Key ID:/d' \
+    -e '/^ *Creation Time:/d' \
+    -e '/^ *Modification Time:/d' \
+    output > actual
+
+# there should be 2 keys
+cat > expected << EOF
+  Algorithm: 1.2.840.10045.2.1
+  Size: -1
+  Owner: UID=testuser1
+
+  Algorithm: 1.2.840.10045.2.1
+  Size: -1
+  Owner: UID=testuser2
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check keys after key archival using pki ca-cert-issue (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check key record after key archival using pki ca-cert-issue"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pki \
+    -u kraadmin \
+    -w Secret.123 \
+    kra-key-find \
+    --owner UID=testuser2 \
+    | tee output
+
+HEX_KEY_ID=$(sed -n "s/^\s*Key ID:\s*\(\S*\)$/\1/p" output)
+echo "Key ID: $HEX_KEY_ID"
+
+DEC_KEY_ID=$(python -c "print(int('$HEX_KEY_ID', 16))")
+echo "Dec Key ID: $DEC_KEY_ID"
+
+# get key record
+docker exec pki ldapsearch \
+    -H ldap://ds.example.com:3389 \
+    -x \
+    -D "cn=Directory Manager" \
+    -w Secret.123 \
+    -b "cn=$DEC_KEY_ID,ou=keyRepository,ou=kra,dc=kra,dc=pki,dc=example,dc=com" \
+    -o ldif_wrap=no \
+    -LLL | tee output
+
+# normalize output
+sed \
+    -e '/^$/d' \
+    -e 's/^\(serialno\): .*$/\1: XXXXX/' \
+    -e 's/^\(privateKeyData\):: .*$/\1:: XXXXX/' \
+    -e 's/^\(publicKeyData\):: .*$/\1:: XXXXX/' \
+    -e 's/^\(metaInfo: payloadEncryptionIV\):.*/\1:XXXXX/' \
+    -e 's/^\(dateOfCreate\): .*$/\1: XXXXX/' \
+    -e 's/^\(dateOfModify\): .*$/\1: XXXXX/' \
+    output > actual
+
+cat > expected << EOF
+dn: cn=$DEC_KEY_ID,ou=keyRepository,ou=kra,dc=kra,dc=pki,dc=example,dc=com
+objectClass: top
+objectClass: keyRecord
+keyState: VALID
+serialno: XXXXX
+ownerName: UID=testuser2
+keySize: -1
+algorithm: 1.2.840.10045.2.1
+privateKeyData:: XXXXX
+publicKeyData:: XXXXX
+metaInfo: payloadEncrypted:false
+metaInfo: sessionKeyLength:128
+metaInfo: sessionKeyWrapAlgorithm:RSA
+metaInfo: sessionKeyKeyGenAlgorithm:AES
+metaInfo: payloadEncryptionOID:2.16.840.1.101.3.4.1.2
+metaInfo: payloadEncryptionIV:XXXXX
+metaInfo: payloadWrapAlgorithm:AES KeyWrap/Padding
+metaInfo: EllipticCurve:SECG elliptic curve secp521r1 (aka NIST P-521)
+metaInfo: sessionKeyType:AES
+dateOfCreate: XXXXX
+dateOfModify: XXXXX
+archivedBy: CA-pki.example.com-8443
+cn: $DEC_KEY_ID
+EOF
+
+diff expected actual
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check key record after key archival using pki ca-cert-issue (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Remove KRA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkidestroy -s KRA -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Remove KRA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Remove CA"
+if [[ "$GHA_FAILED" -eq 0 ]]; then
+set +e
+(
+set -euo pipefail
+docker exec pki pkidestroy -s CA -v
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Remove CA (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+fi
+
+step "Check PKI server systemd journal"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki journalctl -x --no-pager -u pki-tomcatd@pki-tomcat.service
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server systemd journal (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check PKI server access log"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki find /var/log/pki/pki-tomcat -name "localhost_access_log.*" -exec cat {} \;
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check PKI server access log (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check CA debug log"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki find /var/lib/pki/pki-tomcat/logs/ca -name "debug.*" -exec cat {} \;
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check CA debug log (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+step "Check KRA debug log"
+# GHA if: always() — run even after prior step failures; may fail the test
+set +e
+(
+set -euo pipefail
+docker exec pki find /var/lib/pki/pki-tomcat/logs/kra -name "debug.*" -exec cat {} \;
+)
+_rc=$?
+set -euo pipefail
+if [[ $_rc -ne 0 ]]; then
+    echo "FAIL: Check KRA debug log (rc=$_rc)" >&2
+    GHA_FAILED=$_rc
+fi
+
+if [[ "$GHA_FAILED" -ne 0 ]]; then
+    echo "==== kra-ecc-test FAILED ===="
+    exit "$GHA_FAILED"
+fi
+echo "==== kra-ecc-test PASSED ===="

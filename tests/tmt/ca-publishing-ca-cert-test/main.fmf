@@ -1,0 +1,14 @@
+summary: CA with CA cert publishing (GHA ca-publishing-ca-cert-test)
+description: |
+  TMT port of .github/workflows/ca-publishing-ca-cert-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - ca
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/ca-publishing-ca-cert-test.yml

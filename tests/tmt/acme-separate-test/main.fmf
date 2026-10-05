@@ -1,0 +1,14 @@
+summary: ACME on separate instance (GHA acme-separate-test)
+description: |
+  TMT port of .github/workflows/acme-separate-test.yml.
+test: ./test.sh
+framework: shell
+require: []
+duration: 60m
+tag:
+    - acme
+    - dogtag
+    - idm-8254
+link:
+    - verifies: https://redhat.atlassian.net/browse/IDM-8254
+    - implements: /.github/workflows/acme-separate-test.yml
